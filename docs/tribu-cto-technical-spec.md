@@ -257,7 +257,7 @@ Design direction:
 - Primary action color: deep earth `#8F4F2E`, with charcoal `#332722` for high-emphasis controls.
 - Accent warmth: parchment `#F6EAD4`, light paper `#FFFAF0`, and muted gold `#DFC9A4`.
 - Supporting contrast: restrained blues and teals only for system state, search, decisions, and knowledge surfaces.
-- Cultural motif layer: subtle Baybayin, three-stars-and-sun logo geometry, and low-opacity pre-colonial-inspired patterns. These should support the product atmosphere without overpowering core workflow clarity.
+- Cultural motif layer: three-stars-and-sun logo geometry and low-opacity pre-colonial-inspired patterns. These should support the product atmosphere without overpowering core workflow clarity.
 
 Primary camp layout:
 

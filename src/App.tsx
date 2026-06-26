@@ -53,67 +53,7 @@ const workspaceRoles: { role: WorkspaceRole; detail: string }[] = [
   { role: 'guest', detail: 'Only invited trails and assigned work.' },
 ];
 
-const baybayinWords = [
-  { glyph: 'ᜆᜒᜏᜎ', label: 'Tiwala' },
-  { glyph: 'ᜊᜒᜌᜌ', label: 'Biyaya' },
-  { glyph: 'ᜉᜇᜌᜓᜈ᜔', label: 'Padayon' },
-  { glyph: 'ᜉᜓᜑᜓᜈ᜔', label: 'Puhon' },
-  { glyph: 'ᜋᜆᜒᜊᜌ᜔', label: 'Matibay' },
-  { glyph: 'ᜃᜋᜎᜌᜈ᜔', label: 'Kamalayan' },
-  { glyph: 'ᜃᜇᜓᜈᜓᜅᜈ᜔', label: 'Karunungan' },
-  { glyph: 'ᜑᜒᜏᜄ', label: 'Hiwaga' },
-  { glyph: 'ᜀᜎᜓᜈ᜔', label: 'Alon' },
-  { glyph: 'ᜃᜇᜄᜆᜈ᜔', label: 'Karagatan' },
-  { glyph: 'ᜑᜓᜋᜎᜒᜅ᜔', label: 'Humaling' },
-  { glyph: 'ᜃᜎᜒᜃᜐᜈ᜔', label: 'Kalikasan' },
-  { glyph: 'ᜋᜆᜆᜄ᜔', label: 'Matatag' },
-  { glyph: 'ᜐᜒᜈᜄ᜔', label: 'Sinag' },
-  { glyph: 'ᜆᜎ', label: 'Tala' },
-  { glyph: 'ᜎᜒᜃ᜔ᜑ', label: 'Likha' },
-  { glyph: 'ᜋᜎᜌ', label: 'Malaya' },
-  { glyph: 'ᜄᜓᜈᜒᜆ', label: 'Gunita' },
-  { glyph: 'ᜋᜃᜒᜐᜒᜄ᜔', label: 'Makisig' },
-  { glyph: 'ᜉᜅᜃᜓ', label: 'Pangako' },
-  { glyph: 'ᜉᜇᜎᜓᜋᜈ᜔', label: 'Paraluman' },
-  { glyph: 'ᜉᜄ᜔ᜐᜋᜓ', label: 'Pagsamo' },
-  { glyph: 'ᜆᜇ᜔ᜑᜈ', label: 'Tadhana' },
-];
-
-const baybayinBackdropZones = [
-  { x: [2, 12], y: [12, 24] },
-  { x: [58, 72], y: [8, 20] },
-  { x: [8, 20], y: [58, 70] },
-  { x: [66, 80], y: [60, 74] },
-];
-
 const INVITE_STORAGE_KEY = 'tribu_invite_token';
-
-type BaybayinBackdropItem = {
-  glyph: string;
-  left: number;
-  top: number;
-  rotate: number;
-  size: number;
-};
-
-function randomBetween(min: number, max: number) {
-  return min + Math.random() * (max - min);
-}
-
-function createBaybayinBackdropItems(): BaybayinBackdropItem[] {
-  const startIndex = Math.floor(Math.random() * baybayinWords.length);
-
-  return baybayinBackdropZones.map((zone, index) => {
-    const word = baybayinWords[(startIndex + index * 4) % baybayinWords.length];
-    return {
-      glyph: word.glyph,
-      left: randomBetween(zone.x[0], zone.x[1]),
-      top: randomBetween(zone.y[0], zone.y[1]),
-      rotate: randomBetween(-8, 8),
-      size: randomBetween(6.5, 9),
-    };
-  });
-}
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -140,6 +80,8 @@ export default function App() {
   const [inviteAcceptError, setInviteAcceptError] = useState('');
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
+  const currentRole = selectedWorkspace?.role;
+  const canManageAdmin = currentRole === 'owner' || currentRole === 'admin';
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
 
@@ -393,6 +335,12 @@ export default function App() {
       });
   }, [selectedPost?.id]);
 
+  useEffect(() => {
+    if (view === 'admin' && !canManageAdmin) {
+      setView('feed');
+    }
+  }, [canManageAdmin, view]);
+
   const currentSpacePosts = activeSpaceId === 'all'
     ? visiblePosts
     : visiblePosts.filter((post) => post.space_id === activeSpaceId);
@@ -452,7 +400,6 @@ export default function App() {
   return (
     <div className={cn('relative h-dvh overflow-hidden font-sans', theme === 'dark' ? 'bg-[#201815] text-[#FFF7E8]' : 'bg-[#F6EAD4] text-[#211A16]')}>
       <AmbientMotifs theme={theme} />
-      <BaybayinBackdrop theme={theme} />
       <div className="relative z-10 grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
         <Sidebar
           activeSpaceId={activeSpaceId}
@@ -471,6 +418,7 @@ export default function App() {
           onCreateSpace={() => setSpaceModalOpen(true)}
           onSignOut={() => void supabase?.auth.signOut()}
           themeToggle={() => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))}
+          canManageAdmin={canManageAdmin}
         />
 
         <main className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -559,7 +507,7 @@ export default function App() {
 
               {view === 'tasks' && <TasksView tasks={tasks} profiles={profiles} theme={theme} />}
               {view === 'knowledge' && <KnowledgeView theme={theme} />}
-              {view === 'admin' && (
+              {view === 'admin' && canManageAdmin && (
                 <AdminView
                   workspace={selectedWorkspace}
                   theme={theme}
@@ -635,46 +583,6 @@ function AmbientMotifs({ theme }: { theme: 'light' | 'dark' }) {
   );
 }
 
-function BaybayinBackdrop({ theme, className = '' }: { theme: 'light' | 'dark'; className?: string }) {
-  const [items, setItems] = useState<BaybayinBackdropItem[]>(() => createBaybayinBackdropItems());
-  const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    let timeoutId: number | undefined;
-    const intervalId = window.setInterval(() => {
-      setVisible(false);
-      timeoutId = window.setTimeout(() => {
-        setItems(createBaybayinBackdropItems());
-        setVisible(true);
-      }, 1400);
-    }, 60000);
-
-    return () => {
-      window.clearInterval(intervalId);
-      if (timeoutId) window.clearTimeout(timeoutId);
-    };
-  }, []);
-
-  return (
-    <div className={cn('pointer-events-none absolute inset-0 z-0 hidden overflow-hidden md:block', theme === 'dark' ? 'text-[#FFF7E8]/5' : 'text-[#211A16]/5', className)} aria-hidden="true">
-      {items.map((item, index) => (
-        <span
-          key={`${item.glyph}-${index}`}
-          className={cn('absolute font-serif font-semibold leading-none tracking-[0.02em] transition-opacity duration-1000 ease-in-out', visible ? 'opacity-100' : 'opacity-0')}
-          style={{
-            left: `${item.left}%`,
-            top: `${item.top}%`,
-            transform: `rotate(${item.rotate}deg)`,
-            fontSize: `clamp(${item.size}rem, ${item.size * 1.6}vw, ${item.size + 4}rem)`,
-          }}
-        >
-          {item.glyph}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function TribuLogo({ className = '' }: { className?: string }) {
   return (
     <img src={tribuLogoUrl} alt="" className={cn('object-contain mix-blend-multiply', className)} aria-hidden="true" />
@@ -695,6 +603,7 @@ function Sidebar({
   onCreateSpace,
   onSignOut,
   themeToggle,
+  canManageAdmin,
 }: {
   activeSpaceId: string;
   onSpaceChange: (spaceId: string) => void;
@@ -709,6 +618,7 @@ function Sidebar({
   onCreateSpace: () => void;
   onSignOut: () => void;
   themeToggle: () => void;
+  canManageAdmin: boolean;
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || currentRole === 'admin';
@@ -743,7 +653,7 @@ function Sidebar({
           <NavButton icon={MessageSquare} label="Active Feed" active={view === 'feed'} onClick={() => onViewChange('feed')} theme={theme} />
           <NavButton icon={ClipboardList} label="Tasks" active={view === 'tasks'} onClick={() => onViewChange('tasks')} theme={theme} />
           <NavButton icon={FileText} label="Knowledge" active={view === 'knowledge'} onClick={() => onViewChange('knowledge')} theme={theme} />
-          <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />
+          {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
         </nav>
 
         <section className="mt-7 min-h-0 overflow-hidden">
@@ -1274,7 +1184,7 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
           {inviteToken
             ? 'Use the exact email address that received this invite.'
-            : 'Chiefs, Admins, Members, and Guests all sign in with their camp email.'}
+            : 'Enter the email connected to your Camp. Chiefs, Admins, Members, and Guests all use the same sign-in.'}
         </p>
         <form
           className="mt-6 grid gap-3 text-left"
@@ -1325,6 +1235,7 @@ function OnboardingScreen({
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [creatingCamp, setCreatingCamp] = useState(false);
 
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
@@ -1332,36 +1243,51 @@ function OnboardingScreen({
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#E9B93E] text-[#211A16] shadow-lg shadow-[#8F4F2E]/20">
           <TribuLogo className="h-12 w-12" />
         </div>
-        <h1 className="mt-6 text-3xl font-bold tracking-tight">Create your Chief account</h1>
+        <h1 className="mt-6 text-3xl font-bold tracking-tight">No Camp found</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
-          Signed in as {email}. Creating a camp makes this account the Chief, then you can invite Admins, Members, and Guests.
+          You are signed in as {email}, but this email is not a member of any Camp yet. If you expected access, use the invited email or ask your Chief/Admin for an invite.
         </p>
-        <form
-          className="mt-6 grid gap-3 text-left"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            if (!name.trim()) return;
-            setSubmitting(true);
-            setError('');
-            try {
-              await onCreate(name.trim());
-            } catch (caughtError) {
-              setError(getErrorMessage(caughtError));
-            } finally {
-              setSubmitting(false);
-            }
-          }}
-        >
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Camp name" className={cn('h-12 rounded-lg border bg-transparent px-4 outline-none', subtleButton(theme))} />
-          <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            Create camp as Chief
-          </button>
-          <button type="button" onClick={onSignOut} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
-            Use a different email
-          </button>
-          {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
-        </form>
+        {!creatingCamp && (
+          <div className="mt-6 grid gap-3 text-left">
+            <button type="button" onClick={onSignOut} className="inline-flex h-12 items-center justify-center rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white">
+              Sign in with a different email
+            </button>
+            <button type="button" onClick={() => setCreatingCamp(true)} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
+              Create a new Camp instead
+            </button>
+          </div>
+        )}
+        {creatingCamp && (
+          <form
+            className="mt-6 grid gap-3 text-left"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!name.trim()) return;
+              setSubmitting(true);
+              setError('');
+              try {
+                await onCreate(name.trim());
+              } catch (caughtError) {
+                setError(getErrorMessage(caughtError));
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            <div className={cn('rounded-lg border px-4 py-3 text-sm leading-6', surface(theme))}>
+              This creates a separate Camp and makes {email} the Chief. Do this only if you are starting a new Camp.
+            </div>
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New Camp name" className={cn('h-12 rounded-lg border bg-transparent px-4 outline-none', subtleButton(theme))} />
+            <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              Create new Camp as Chief
+            </button>
+            <button type="button" onClick={() => setCreatingCamp(false)} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
+              Back to sign-in options
+            </button>
+            {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
+          </form>
+        )}
       </div>
     </CenteredScreen>
   );
@@ -1441,7 +1367,6 @@ function CenteredScreen({ theme, setTheme, children }: { theme: 'light' | 'dark'
   return (
     <div className={cn('relative grid h-dvh overflow-hidden p-4', theme === 'dark' ? 'bg-[#201815] text-[#FFF7E8]' : 'bg-[#F6EAD4] text-[#211A16]')}>
       <AmbientMotifs theme={theme} />
-      <BaybayinBackdrop theme={theme} />
       <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className={cn('absolute right-5 top-5 z-10 rounded-lg border p-2', subtleButton(theme))}>
         {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
