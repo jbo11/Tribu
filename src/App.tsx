@@ -601,16 +601,6 @@ export default function App() {
               comments={comments}
               profiles={profiles}
               theme={theme}
-              canManagePost={Boolean(selectedPost && (selectedPost.author_id === session.user.id || canManageAdmin))}
-              onEditPost={() => {
-                if (selectedPost) setEditingPost(selectedPost);
-              }}
-              onDeletePost={async () => {
-                if (!selectedPost || !window.confirm('Delete this post and its discussion?')) return;
-                await deletePost(selectedPost.id);
-                setSelectedPostId('');
-                await loadWorkspaceData(workspaceId, true);
-              }}
               onReply={async (body, isDecision) => {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, isDecision);
@@ -941,25 +931,27 @@ function PostRow({
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
+              aria-label="Edit post"
+              title="Edit post"
               onClick={(event) => {
                 event.stopPropagation();
                 onEdit();
               }}
-              className={cn('inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}
+              className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
             >
               <Pencil className="h-3.5 w-3.5" />
-              Edit
             </button>
             <button
               type="button"
+              aria-label="Delete post"
+              title="Delete post"
               onClick={(event) => {
                 event.stopPropagation();
                 void onDelete();
               }}
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-xs font-semibold text-[#B91C1C]"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Delete
             </button>
           </div>
         )}
@@ -974,9 +966,6 @@ function ThreadPanel({
   comments,
   profiles,
   theme,
-  canManagePost,
-  onEditPost,
-  onDeletePost,
   onReply,
 }: {
   post?: AppPost;
@@ -984,9 +973,6 @@ function ThreadPanel({
   comments: AppComment[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
-  canManagePost: boolean;
-  onEditPost: () => void;
-  onDeletePost: () => Promise<void>;
   onReply: (body: string, isDecision: boolean) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
@@ -1009,16 +995,6 @@ function ThreadPanel({
             <StatusPill state={post.state} />
             <h2 className="mt-3 text-xl font-bold tracking-tight">{post.title}</h2>
           </div>
-          {canManagePost && (
-            <div className="flex shrink-0 items-center gap-2">
-              <button type="button" aria-label="Edit post" onClick={onEditPost} className={cn('rounded-lg border p-2', subtleButton(theme))}>
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button type="button" aria-label="Delete post" onClick={() => void onDeletePost()} className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] p-2 text-[#B91C1C]">
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -1119,7 +1095,7 @@ function TasksView({
       </div>
       <div className="grid gap-3 overflow-y-auto pr-1 scroll-area">
         {tasks.map((task) => (
-          <div key={task.id} className={cn('grid gap-3 rounded-lg border p-4 xl:grid-cols-[1fr_180px_160px_auto]', surface(theme))}>
+          <div key={task.id} className={cn('grid gap-4 rounded-lg border p-4 xl:grid-cols-[minmax(0,1fr)_180px_180px]', surface(theme))}>
             <div className="min-w-0">
               <p className="font-semibold">{task.title}</p>
               {task.description && <p className={cn('mt-1 line-clamp-2 text-sm leading-6', muted(theme))}>{task.description}</p>}
@@ -1129,26 +1105,38 @@ function TasksView({
               <Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} />
               <p className={cn('min-w-0 truncate text-sm', muted(theme))}>{task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p>
             </div>
-            <select
-              value={task.status}
-              onChange={(event) => void onStatusChange(task.id, event.target.value as TaskStatus)}
-              className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm font-semibold capitalize outline-none', subtleButton(theme))}
-            >
-              <option value="todo">To do</option>
-              <option value="in_progress">In progress</option>
-              <option value="blocked">Blocked</option>
-              <option value="done">Done</option>
-              <option value="canceled">Canceled</option>
-            </select>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => onEditTask(task)} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}>
-                <Pencil className="h-3.5 w-3.5" />
-                Edit
-              </button>
-              <button type="button" onClick={() => void onDeleteTask(task)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-xs font-semibold text-[#B91C1C]">
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
-              </button>
+            <div className="flex flex-col items-stretch gap-2 xl:items-end">
+              <select
+                value={task.status}
+                onChange={(event) => void onStatusChange(task.id, event.target.value as TaskStatus)}
+                className={cn('h-10 w-full rounded-lg border bg-transparent px-3 text-sm font-semibold capitalize outline-none xl:w-44', subtleButton(theme))}
+              >
+                <option value="todo">To do</option>
+                <option value="in_progress">In progress</option>
+                <option value="blocked">Blocked</option>
+                <option value="done">Done</option>
+                <option value="canceled">Canceled</option>
+              </select>
+              <div className="flex items-center gap-2 xl:justify-end">
+                <button
+                  type="button"
+                  aria-label="Edit task"
+                  title="Edit task"
+                  onClick={() => onEditTask(task)}
+                  className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Delete task"
+                  title="Delete task"
+                  onClick={() => void onDeleteTask(task)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -1220,25 +1208,27 @@ function KnowledgeView({
                   <div className="ml-auto flex items-center gap-2">
                     <button
                       type="button"
+                      aria-label="Edit knowledge entry"
+                      title="Edit knowledge entry"
                       onClick={(event) => {
                         event.stopPropagation();
                         onEditPost(post);
                       }}
-                      className={cn('inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}
+                      className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
                     >
                       <Pencil className="h-3.5 w-3.5" />
-                      Edit
                     </button>
                     <button
                       type="button"
+                      aria-label="Delete knowledge entry"
+                      title="Delete knowledge entry"
                       onClick={(event) => {
                         event.stopPropagation();
                         void onDeletePost(post);
                       }}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-xs font-semibold text-[#B91C1C]"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                      Delete
                     </button>
                   </div>
                 )}
