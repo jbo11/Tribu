@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   CheckCircle2,
@@ -145,6 +145,7 @@ export default function App() {
         .from('tasks')
         .select('id, workspace_id, post_id, title, description, assignee_id, created_by, status, due_at, created_at, updated_at')
         .eq('workspace_id', targetWorkspaceId)
+        .neq('status', 'canceled')
         .order('created_at', { ascending: false })
         .limit(40),
       supabase
@@ -978,6 +979,11 @@ function ThreadPanel({
   const [reply, setReply] = useState('');
   const [isDecision, setIsDecision] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const latestMessageRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [post?.id, comments.length]);
 
   if (!post) {
     return (
@@ -1012,6 +1018,7 @@ function ThreadPanel({
               />
             </div>
           ))}
+          <div ref={latestMessageRef} />
         </div>
       </div>
 
@@ -1165,7 +1172,7 @@ function KnowledgeView({
   onDeletePost: (post: AppPost) => Promise<void>;
 }) {
   const knowledgePosts = posts
-    .filter((post) => post.has_decision || post.state === 'read_only' || post.state === 'locked')
+    .filter((post) => post.state !== 'archived' && (post.has_decision || post.state === 'read_only' || post.state === 'locked'))
     .sort((a, b) => Number(b.has_decision) - Number(a.has_decision) || new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime());
 
   if (knowledgePosts.length === 0) {
@@ -1978,13 +1985,28 @@ async function ensureProfile(session: Session) {
   if (!supabase) return;
   const email = session.user.email ?? '';
   const displayName = session.user.user_metadata?.full_name ?? email.split('@')[0] ?? 'Member';
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  await supabase.from('users').upsert({
+  const { data: existingProfile } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', session.user.id)
+    .maybeSingle();
+
+  if (existingProfile) {
+    await supabase
+      .from('users')
+      .update({ email, timezone })
+      .eq('id', session.user.id);
+    return;
+  }
+
+  await supabase.from('users').insert({
     id: session.user.id,
     email,
     display_name: displayName,
     avatar_url: session.user.user_metadata?.avatar_url ?? null,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone,
   });
 }
 
@@ -2086,7 +2108,18 @@ async function updatePost(postId: string, input: { title: string; body: string; 
 async function deletePost(postId: string) {
   if (!supabase) return;
   const { error } = await supabase.from('posts').delete().eq('id', postId);
-  if (error) throw error;
+  if (!error) return;
+
+  const { error: archiveError } = await supabase
+    .from('posts')
+    .update({
+      state: 'archived',
+      archived_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq('id', postId);
+
+  if (archiveError) throw error;
 }
 
 async function createComment(post: AppPost, userId: string, body: string, isDecision: boolean) {
@@ -2145,7 +2178,14 @@ async function updateTaskStatus(taskId: string, status: TaskStatus) {
 async function deleteTask(taskId: string) {
   if (!supabase) return;
   const { error } = await supabase.from('tasks').delete().eq('id', taskId);
-  if (error) throw error;
+  if (!error) return;
+
+  const { error: cancelError } = await supabase
+    .from('tasks')
+    .update({ status: 'canceled' })
+    .eq('id', taskId);
+
+  if (cancelError) throw error;
 }
 
 async function updateProfile(
@@ -2153,18 +2193,26 @@ async function updateProfile(
   input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string },
 ) {
   if (!supabase) return;
-  const { error } = await supabase
+  const { error: basicError } = await supabase
     .from('users')
     .update({
       display_name: input.displayName,
       avatar_url: input.avatarUrl || null,
+      timezone: input.timezone || null,
+    })
+    .eq('id', userId);
+  if (basicError) throw basicError;
+
+  const { error: detailsError } = await supabase
+    .from('users')
+    .update({
       phone: input.phone || null,
       address: input.address || null,
-      timezone: input.timezone || null,
       bio: input.bio || null,
     })
     .eq('id', userId);
-  if (error) throw error;
+
+  if (detailsError && !isMissingProfileDetailsError(detailsError.message)) throw detailsError;
 }
 
 async function createWorkspaceInvitation(workspaceId: string, email: string, role: WorkspaceRole) {
@@ -2210,6 +2258,11 @@ function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === 'object' && error && 'message' in error) return String(error.message);
   return 'Something went wrong. Please try again.';
+}
+
+function isMissingProfileDetailsError(message: string) {
+  const normalized = message.toLowerCase();
+  return ['phone', 'address', 'bio'].some((column) => normalized.includes(column));
 }
 
 function getRoleLabel(role: WorkspaceRole) {
