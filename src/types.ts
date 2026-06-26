@@ -11,6 +11,9 @@ export interface AppProfile {
   display_name: string;
   avatar_url: string | null;
   timezone: string | null;
+  phone?: string | null;
+  address?: string | null;
+  bio?: string | null;
 }
 
 export interface AppWorkspace {

@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Archive,
+  Camera,
   CheckCircle2,
   ClipboardList,
   Copy,
@@ -9,14 +10,18 @@ import {
   Loader2,
   Lock,
   LogOut,
+  Mail,
   Menu,
   MessageSquare,
   Moon,
+  Phone,
   Plus,
   Search,
   Send,
+  Settings,
   ShieldCheck,
   Sun,
+  User,
   UserPlus,
   X,
   type LucideIcon,
@@ -34,6 +39,7 @@ import {
   AppWorkspace,
   SpaceAccess,
   SortMode,
+  TaskStatus,
   ViewMode,
   WorkspaceRole,
 } from './types';
@@ -54,6 +60,8 @@ const workspaceRoles: { role: WorkspaceRole; detail: string }[] = [
 ];
 
 const INVITE_STORAGE_KEY = 'tribu_invite_token';
+const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
+const PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone, phone, address, bio';
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -76,6 +84,8 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
 
@@ -84,6 +94,11 @@ export default function App() {
   const canManageAdmin = currentRole === 'owner' || currentRole === 'admin';
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
+  const currentProfile = session?.user.id ? profiles[session.user.id] : undefined;
+  const memberProfiles = useMemo(
+    () => (Object.values(profiles) as AppProfile[]).sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    [profiles],
+  );
 
   const visiblePosts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -110,7 +125,7 @@ export default function App() {
     setLoading(true);
     setNotice('');
 
-    const [spaceResult, postResult, taskResult] = await Promise.all([
+    const [spaceResult, postResult, taskResult, membershipResult, decisionResult] = await Promise.all([
       supabase
         .from('spaces')
         .select('id, workspace_id, name, slug, access, description, archived_at, created_by, created_at, updated_at')
@@ -129,14 +144,26 @@ export default function App() {
         .eq('workspace_id', targetWorkspaceId)
         .order('created_at', { ascending: false })
         .limit(40),
+      supabase
+        .from('memberships')
+        .select('user_id')
+        .eq('workspace_id', targetWorkspaceId),
+      supabase
+        .from('comments')
+        .select('post_id')
+        .eq('workspace_id', targetWorkspaceId)
+        .eq('is_decision', true),
     ]);
 
     if (spaceResult.error) setNotice(spaceResult.error.message);
     if (postResult.error) setNotice(postResult.error.message);
     if (taskResult.error) setNotice(taskResult.error.message);
+    if (membershipResult.error) setNotice(membershipResult.error.message);
+    if (decisionResult.error) setNotice(decisionResult.error.message);
 
     const nextSpaces = (spaceResult.data ?? []) as AppSpace[];
-    const nextPosts = ((postResult.data ?? []) as AppPost[]).map((post) => ({ ...post, has_decision: false }));
+    const decisionPostIds = new Set((decisionResult.data ?? []).map((comment) => String(comment.post_id)));
+    const nextPosts = ((postResult.data ?? []) as AppPost[]).map((post) => ({ ...post, has_decision: decisionPostIds.has(post.id) }));
     const nextTasks = (taskResult.data ?? []) as AppTask[];
 
     setSpaces(nextSpaces);
@@ -151,16 +178,11 @@ export default function App() {
       if (task.assignee_id) profileIds.add(task.assignee_id);
       profileIds.add(task.created_by);
     });
+    (membershipResult.data ?? []).forEach((membership) => profileIds.add(String(membership.user_id)));
 
     if (profileIds.size > 0) {
-      const profileResult = await supabase
-        .from('users')
-        .select('id, email, display_name, avatar_url, timezone')
-        .in('id', [...profileIds]);
-
-      if (!profileResult.error) {
-        setProfiles(Object.fromEntries(((profileResult.data ?? []) as AppProfile[]).map((profile) => [profile.id, profile])));
-      }
+      const nextProfiles = await fetchProfiles([...profileIds]);
+      setProfiles(Object.fromEntries(nextProfiles.map((profile) => [profile.id, profile])));
     } else {
       setProfiles({});
     }
@@ -281,6 +303,36 @@ export default function App() {
     })();
   }, [authReady, inviteToken, loadMemberships, session]);
 
+  const loadComments = useCallback(async (postId: string) => {
+    if (!supabase || !postId) {
+      setComments([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('comments')
+      .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    const nextComments = (data ?? []) as AppComment[];
+    setComments(nextComments);
+
+    const authorIds = [...new Set(nextComments.map((comment) => comment.author_id))];
+    if (authorIds.length) {
+      const nextProfiles = await fetchProfiles(authorIds);
+      setProfiles((current) => ({
+        ...current,
+        ...Object.fromEntries(nextProfiles.map((profile) => [profile.id, profile])),
+      }));
+    }
+  }, []);
+
   useEffect(() => {
     if (!supabase || !workspaceId) return;
 
@@ -291,50 +343,47 @@ export default function App() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId);
+        if (selectedPost?.id) void loadComments(selectedPost.id);
       })
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, () => {
+        void loadWorkspaceData(workspaceId);
+      })
+      .subscribe((status, error) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setNotice(error?.message ?? 'Live updates could not connect. Tribu will keep checking for updates automatically.');
+        }
+      });
 
     return () => {
       void supabase.removeChannel(channel);
     };
+  }, [loadComments, loadWorkspaceData, selectedPost?.id, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const intervalId = window.setInterval(() => {
+      void loadWorkspaceData(workspaceId);
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
   }, [loadWorkspaceData, workspaceId]);
 
   useEffect(() => {
-    if (!supabase || !selectedPost?.id) {
+    if (!selectedPost?.id) {
       setComments([]);
       return;
     }
+    void loadComments(selectedPost.id);
+  }, [loadComments, selectedPost?.id]);
 
-    supabase
-      .from('comments')
-      .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
-      .eq('post_id', selectedPost.id)
-      .order('created_at', { ascending: true })
-      .then(async ({ data, error }) => {
-        if (error) {
-          setNotice(error.message);
-          return;
-        }
+  useEffect(() => {
+    if (!selectedPost?.id) return;
+    const intervalId = window.setInterval(() => {
+      void loadComments(selectedPost.id);
+    }, 5000);
 
-        const nextComments = (data ?? []) as AppComment[];
-        setComments(nextComments);
-
-        const authorIds = [...new Set(nextComments.map((comment) => comment.author_id))];
-        if (authorIds.length) {
-          const profileResult = await supabase
-            .from('users')
-            .select('id, email, display_name, avatar_url, timezone')
-            .in('id', authorIds);
-
-          if (!profileResult.error) {
-            setProfiles((current) => ({
-              ...current,
-              ...Object.fromEntries(((profileResult.data ?? []) as AppProfile[]).map((profile) => [profile.id, profile])),
-            }));
-          }
-        }
-      });
-  }, [selectedPost?.id]);
+    return () => window.clearInterval(intervalId);
+  }, [loadComments, selectedPost?.id]);
 
   useEffect(() => {
     if (view === 'admin' && !canManageAdmin) {
@@ -417,8 +466,8 @@ export default function App() {
           sidebarOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           onCreateSpace={() => setSpaceModalOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
           onSignOut={() => void supabase?.auth.signOut()}
-          themeToggle={() => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))}
           canManageAdmin={canManageAdmin}
         />
 
@@ -506,8 +555,30 @@ export default function App() {
                 </>
               )}
 
-              {view === 'tasks' && <TasksView tasks={tasks} profiles={profiles} theme={theme} />}
-              {view === 'knowledge' && <KnowledgeView theme={theme} />}
+              {view === 'tasks' && (
+                <TasksView
+                  tasks={tasks}
+                  profiles={profiles}
+                  theme={theme}
+                  onCreateTask={() => setTaskModalOpen(true)}
+                  onStatusChange={async (taskId, status) => {
+                    await updateTaskStatus(taskId, status);
+                    await loadWorkspaceData(workspaceId);
+                  }}
+                />
+              )}
+              {view === 'knowledge' && (
+                <KnowledgeView
+                  posts={posts}
+                  spaces={spaces}
+                  profiles={profiles}
+                  theme={theme}
+                  onOpenPost={(postId) => {
+                    setSelectedPostId(postId);
+                    setView('feed');
+                  }}
+                />
+              )}
               {view === 'admin' && canManageAdmin && (
                 <AdminView
                   workspace={selectedWorkspace}
@@ -527,6 +598,7 @@ export default function App() {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, isDecision);
                 await loadWorkspaceData(workspaceId);
+                await loadComments(selectedPost.id);
               }}
             />
           </div>
@@ -558,6 +630,38 @@ export default function App() {
             setSpaceModalOpen(false);
             await loadWorkspaceData(workspaceId);
             setActiveSpaceId(space.id);
+          }}
+        />
+      )}
+
+      {taskModalOpen && (
+        <TaskModal
+          theme={theme}
+          profiles={memberProfiles}
+          onClose={() => setTaskModalOpen(false)}
+          onCreate={async ({ title, description, assigneeId, dueAt }) => {
+            if (!session.user) return;
+            await createTask(workspaceId, session.user.id, { title, description, assigneeId, dueAt });
+            setTaskModalOpen(false);
+            await loadWorkspaceData(workspaceId);
+          }}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          theme={theme}
+          setTheme={setTheme}
+          profile={currentProfile}
+          email={session.user.email ?? ''}
+          workspace={selectedWorkspace}
+          role={currentRole}
+          onClose={() => setSettingsOpen(false)}
+          onSignOut={() => void supabase?.auth.signOut()}
+          onSaveProfile={async (input) => {
+            if (!session.user) return;
+            await updateProfile(session.user.id, input);
+            await loadWorkspaceData(workspaceId);
           }}
         />
       )}
@@ -602,8 +706,8 @@ function Sidebar({
   sidebarOpen,
   onClose,
   onCreateSpace,
+  onOpenSettings,
   onSignOut,
-  themeToggle,
   canManageAdmin,
 }: {
   activeSpaceId: string;
@@ -617,8 +721,8 @@ function Sidebar({
   sidebarOpen: boolean;
   onClose: () => void;
   onCreateSpace: () => void;
+  onOpenSettings: () => void;
   onSignOut: () => void;
-  themeToggle: () => void;
   canManageAdmin: boolean;
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
@@ -690,9 +794,9 @@ function Sidebar({
         </section>
 
         <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
-          <button onClick={themeToggle} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-sm font-semibold text-[#FFF7E8]">
-            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            Theme
+          <button onClick={onOpenSettings} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-sm font-semibold text-[#FFF7E8]">
+            <Settings className="h-4 w-4" />
+            Settings
           </button>
           <button onClick={onSignOut} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-sm font-semibold text-[#FFF7E8]">
             <LogOut className="h-4 w-4" />
@@ -885,19 +989,54 @@ function ThreadCard({ profile, body, timestamp, theme, isDecision }: { profile?:
   );
 }
 
-function TasksView({ tasks, profiles, theme }: { tasks: AppTask[]; profiles: Record<string, AppProfile>; theme: 'light' | 'dark' }) {
+function TasksView({
+  tasks,
+  profiles,
+  theme,
+  onCreateTask,
+  onStatusChange,
+}: {
+  tasks: AppTask[];
+  profiles: Record<string, AppProfile>;
+  theme: 'light' | 'dark';
+  onCreateTask: () => void;
+  onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>;
+}) {
   if (tasks.length === 0) {
-    return <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Tasks created from discussions will appear here." />;
+    return <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create tasks for follow-ups, assignments, and camp work that should not get lost in posts." actionLabel="Create task" onAction={onCreateTask} />;
   }
 
   return (
     <StaticPanel theme={theme} title="Tasks" icon={ClipboardList}>
-      <div className="grid gap-3">
-        {tasks.slice(0, 8).map((task) => (
-          <div key={task.id} className={cn('grid gap-3 rounded-lg border p-4 md:grid-cols-[1fr_150px_110px]', surface(theme))}>
-            <p className="font-semibold">{task.title}</p>
-            <p className={cn('text-sm', muted(theme))}>{task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p>
-            <p className="w-fit rounded-full bg-[#FFF3C4] px-2.5 py-1 text-xs font-semibold capitalize text-[#8F4F2E]">{task.status.replace('_', ' ')}</p>
+      <div className="mb-4 flex justify-end">
+        <button onClick={onCreateTask} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white">
+          <Plus className="h-4 w-4" />
+          New task
+        </button>
+      </div>
+      <div className="grid gap-3 overflow-y-auto pr-1 scroll-area">
+        {tasks.map((task) => (
+          <div key={task.id} className={cn('grid gap-3 rounded-lg border p-4 md:grid-cols-[1fr_180px_160px]', surface(theme))}>
+            <div className="min-w-0">
+              <p className="font-semibold">{task.title}</p>
+              {task.description && <p className={cn('mt-1 line-clamp-2 text-sm leading-6', muted(theme))}>{task.description}</p>}
+              {task.due_at && <p className={cn('mt-2 text-xs font-semibold', muted(theme))}>Due {new Date(task.due_at).toLocaleDateString()}</p>}
+            </div>
+            <div className="flex items-center gap-3">
+              <Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} />
+              <p className={cn('min-w-0 truncate text-sm', muted(theme))}>{task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p>
+            </div>
+            <select
+              value={task.status}
+              onChange={(event) => void onStatusChange(task.id, event.target.value as TaskStatus)}
+              className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm font-semibold capitalize outline-none', subtleButton(theme))}
+            >
+              <option value="todo">To do</option>
+              <option value="in_progress">In progress</option>
+              <option value="blocked">Blocked</option>
+              <option value="done">Done</option>
+              <option value="canceled">Canceled</option>
+            </select>
           </div>
         ))}
       </div>
@@ -905,10 +1044,54 @@ function TasksView({ tasks, profiles, theme }: { tasks: AppTask[]; profiles: Rec
   );
 }
 
-function KnowledgeView({ theme }: { theme: 'light' | 'dark' }) {
+function KnowledgeView({
+  posts,
+  spaces,
+  profiles,
+  theme,
+  onOpenPost,
+}: {
+  posts: AppPost[];
+  spaces: AppSpace[];
+  profiles: Record<string, AppProfile>;
+  theme: 'light' | 'dark';
+  onOpenPost: (postId: string) => void;
+}) {
+  const knowledgePosts = posts
+    .filter((post) => post.has_decision || post.state === 'read_only' || post.state === 'locked')
+    .sort((a, b) => Number(b.has_decision) - Number(a.has_decision) || new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime());
+
+  if (knowledgePosts.length === 0) {
+    return (
+      <StaticPanel theme={theme} title="Knowledge" icon={FileText}>
+        <EmptyState theme={theme} icon={FileText} title="No knowledge entries yet" body="Mark important replies as Decisions to turn active discussions into a searchable camp knowledge base." />
+      </StaticPanel>
+    );
+  }
+
   return (
     <StaticPanel theme={theme} title="Knowledge" icon={FileText}>
-      <EmptyState theme={theme} icon={FileText} title="No knowledge entries yet" body="Posts converted into documentation will appear here after the knowledge workflow is enabled." />
+      <div className="grid gap-3 overflow-y-auto pr-1 scroll-area">
+        {knowledgePosts.map((post) => {
+          const space = spaces.find((item) => item.id === post.space_id);
+          const profile = profiles[post.author_id];
+          return (
+            <button key={post.id} onClick={() => onOpenPost(post.id)} className={cn('w-full rounded-lg border p-4 text-left transition hover:border-[#E9B93E]', surface(theme))}>
+              <div className="flex flex-wrap items-center gap-2">
+                {post.has_decision && <span className="rounded-full bg-[#D1FAE5] px-2.5 py-1 text-xs font-semibold text-[#065F46]">Decision</span>}
+                {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#DFC9A4]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
+                <span className={cn('ml-auto text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
+              </div>
+              <h3 className="mt-3 text-lg font-bold">{post.title}</h3>
+              <p className={cn('mt-2 line-clamp-3 text-sm leading-6', muted(theme))}>{post.body}</p>
+              <div className="mt-4 flex items-center gap-3">
+                <Avatar profile={profile} />
+                <span className="text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </StaticPanel>
   );
 }
@@ -1153,10 +1336,208 @@ function SpaceModal({
   );
 }
 
+function TaskModal({
+  theme,
+  profiles,
+  onClose,
+  onCreate,
+}: {
+  theme: 'light' | 'dark';
+  profiles: AppProfile[];
+  onClose: () => void;
+  onCreate: (input: { title: string; description: string; assigneeId: string; dueAt: string }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
+  const [dueAt, setDueAt] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  return (
+    <ModalShell theme={theme} title="New task" onClose={onClose}>
+      <form
+        className="grid gap-4"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!title.trim()) return;
+          setSubmitting(true);
+          setError('');
+          try {
+            await onCreate({ title: title.trim(), description: description.trim(), assigneeId, dueAt });
+          } catch (caughtError) {
+            setError(getErrorMessage(caughtError));
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        <label className="grid gap-2 text-sm font-semibold">
+          Task title
+          <input value={title} onChange={(event) => setTitle(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Description
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} className={cn('h-28 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
+        </label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-2 text-sm font-semibold">
+            Assignee
+            <select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
+              <option value="">Unassigned</option>
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.display_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-2 text-sm font-semibold">
+            Due date
+            <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+          </label>
+        </div>
+        <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+          Create task
+        </button>
+        {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
+      </form>
+    </ModalShell>
+  );
+}
+
+function SettingsModal({
+  theme,
+  setTheme,
+  profile,
+  email,
+  workspace,
+  role,
+  onClose,
+  onSignOut,
+  onSaveProfile,
+}: {
+  theme: 'light' | 'dark';
+  setTheme: (theme: 'light' | 'dark') => void;
+  profile?: AppProfile;
+  email: string;
+  workspace?: AppWorkspace;
+  role?: WorkspaceRole;
+  onClose: () => void;
+  onSignOut: () => void;
+  onSaveProfile: (input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string }) => Promise<void>;
+}) {
+  const [displayName, setDisplayName] = useState(profile?.display_name ?? email.split('@')[0] ?? '');
+  const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url ?? '');
+  const [phone, setPhone] = useState(profile?.phone ?? '');
+  const [address, setAddress] = useState(profile?.address ?? '');
+  const [timezone, setTimezone] = useState(profile?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [bio, setBio] = useState(profile?.bio ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  return (
+    <ModalShell theme={theme} title="Settings" onClose={onClose}>
+      <div className="grid gap-5">
+        <section className={cn('rounded-lg border p-4', surface(theme))}>
+          <div className="mb-4 flex items-center gap-3">
+            <Avatar profile={{ id: profile?.id ?? '', email, display_name: displayName || 'Member', avatar_url: avatarUrl || null, timezone }} />
+            <div className="min-w-0">
+              <p className="truncate font-bold">{displayName || 'Camp member'}</p>
+              <p className={cn('truncate text-sm', muted(theme))}>{workspace?.name ?? 'Camp'} · {role ? getRoleLabel(role) : 'Member'}</p>
+            </div>
+          </div>
+          <form
+            className="grid gap-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!displayName.trim()) return;
+              setSubmitting(true);
+              setSaved(false);
+              setError('');
+              try {
+                await onSaveProfile({
+                  displayName: displayName.trim(),
+                  avatarUrl: avatarUrl.trim(),
+                  phone: phone.trim(),
+                  address: address.trim(),
+                  timezone: timezone.trim(),
+                  bio: bio.trim(),
+                });
+                setSaved(true);
+              } catch (caughtError) {
+                setError(getErrorMessage(caughtError));
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            <label className="grid gap-2 text-sm font-semibold">
+              <span className="inline-flex items-center gap-2"><User className="h-4 w-4" /> Name</span>
+              <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> Tribu email</span>
+              <input readOnly value={email} className={cn('h-11 cursor-not-allowed rounded-lg border bg-transparent px-3 opacity-75 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" /> Contact number</span>
+              <input value={phone} onChange={(event) => setPhone(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              Address
+              <input value={address} onChange={(event) => setAddress(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              <span className="inline-flex items-center gap-2"><Camera className="h-4 w-4" /> Photo URL</span>
+              <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              Time zone
+              <input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              About
+              <textarea value={bio} onChange={(event) => setBio(event.target.value)} className={cn('h-24 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
+            </label>
+            <button disabled={submitting || !displayName.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save profile
+            </button>
+            {saved && <p className="text-sm font-semibold text-[#0F766E]">Profile saved.</p>}
+            {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
+          </form>
+        </section>
+
+        <section className={cn('rounded-lg border p-4', surface(theme))}>
+          <p className="font-bold">Appearance</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setTheme('light')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'light' ? 'border-[#E9B93E] bg-[#E9B93E] text-[#211A16]' : subtleButton(theme))}>
+              <Sun className="h-4 w-4" />
+              Light
+            </button>
+            <button type="button" onClick={() => setTheme('dark')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'dark' ? 'border-[#E9B93E] bg-[#E9B93E] text-[#211A16]' : subtleButton(theme))}>
+              <Moon className="h-4 w-4" />
+              Dark
+            </button>
+          </div>
+        </section>
+
+        <button onClick={onSignOut} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#8F4F2E]/30 px-4 text-sm font-semibold text-[#8F4F2E]">
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function ModalShell({ theme, title, children, onClose }: { theme: 'light' | 'dark'; title: string; children: ReactNode; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 p-4">
-      <div className={cn('w-full max-w-lg rounded-xl border p-5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+      <div className={cn('max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl border p-5 shadow-2xl scroll-area', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-bold">{title}</h2>
           <button aria-label="Close modal" onClick={onClose} className={cn('rounded-lg border p-2', subtleButton(theme))}>
@@ -1422,6 +1803,28 @@ function Avatar({ profile }: { profile?: AppProfile }) {
   return <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF3C4] text-sm font-bold text-[#8F4F2E]">{profile?.display_name?.slice(0, 1).toUpperCase() ?? 'M'}</div>;
 }
 
+async function fetchProfiles(userIds: string[]) {
+  if (!supabase || userIds.length === 0) return [];
+
+  const profileResult = await supabase
+    .from('users')
+    .select(PROFILE_SELECT)
+    .in('id', userIds);
+
+  if (!profileResult.error) return (profileResult.data ?? []) as AppProfile[];
+
+  const missingProfileColumn = ['phone', 'address', 'bio'].some((column) => profileResult.error.message.includes(column));
+  if (!missingProfileColumn) return [];
+
+  const fallbackResult = await supabase
+    .from('users')
+    .select(BASIC_PROFILE_SELECT)
+    .in('id', userIds);
+
+  if (fallbackResult.error) return [];
+  return (fallbackResult.data ?? []) as AppProfile[];
+}
+
 async function ensureProfile(session: Session) {
   if (!supabase) return;
   const email = session.user.email ?? '';
@@ -1526,6 +1929,49 @@ async function createComment(post: AppPost, userId: string, body: string, isDeci
     body,
     is_decision: isDecision,
   });
+  if (error) throw error;
+}
+
+async function createTask(
+  workspaceId: string,
+  userId: string,
+  input: { title: string; description: string; assigneeId: string; dueAt: string },
+) {
+  if (!supabase) return;
+  const { error } = await supabase.from('tasks').insert({
+    workspace_id: workspaceId,
+    title: input.title,
+    description: input.description || null,
+    assignee_id: input.assigneeId || null,
+    created_by: userId,
+    status: 'todo',
+    due_at: input.dueAt || null,
+  });
+  if (error) throw error;
+}
+
+async function updateTaskStatus(taskId: string, status: TaskStatus) {
+  if (!supabase) return;
+  const { error } = await supabase.from('tasks').update({ status }).eq('id', taskId);
+  if (error) throw error;
+}
+
+async function updateProfile(
+  userId: string,
+  input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string },
+) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('users')
+    .update({
+      display_name: input.displayName,
+      avatar_url: input.avatarUrl || null,
+      phone: input.phone || null,
+      address: input.address || null,
+      timezone: input.timezone || null,
+      bio: input.bio || null,
+    })
+    .eq('id', userId);
   if (error) throw error;
 }
 
