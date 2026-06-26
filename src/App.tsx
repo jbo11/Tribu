@@ -168,12 +168,13 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  const loadMemberships = useCallback(async (preferredWorkspaceId?: string) => {
+  const loadMemberships = useCallback(async (userId: string, preferredWorkspaceId?: string) => {
     if (!supabase) return;
 
     const membershipResult = await supabase
       .from('memberships')
       .select('workspace_id, role')
+      .eq('user_id', userId)
       .order('joined_at', { ascending: true });
 
     if (membershipResult.error) {
@@ -270,7 +271,7 @@ export default function App() {
           window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
         }
 
-        await loadMemberships(acceptedWorkspaceId);
+        await loadMemberships(session.user.id, acceptedWorkspaceId);
       } catch (caughtError) {
         const message = getErrorMessage(caughtError);
         if (inviteToken) setInviteAcceptError(message);
@@ -391,7 +392,7 @@ export default function App() {
         onSignOut={() => void supabase?.auth.signOut()}
         onCreate={async (workspaceName) => {
           await createWorkspace(session, workspaceName);
-          await loadMemberships();
+          await loadMemberships(session.user.id);
         }}
       />
     );
