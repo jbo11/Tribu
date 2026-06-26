@@ -1,3 +1,4 @@
+# macOS
 .DS_Store
 
 # Dependencies
@@ -21,9 +22,14 @@ pnpm-debug.log*
 .vite/
 .turbo/
 .cache/
+coverage/
 
-# Editor and OS files
+# Editor
 .idea/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+# Misc
+*.tmp
+*.swp
