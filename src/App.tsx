@@ -1283,7 +1283,9 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
             if (!supabase || !email.trim()) return;
             setSubmitting(true);
             setError('');
-            const redirectUrl = new URL(window.location.origin);
+            const redirectUrl = new URL(window.location.href);
+            redirectUrl.hash = '';
+            redirectUrl.search = '';
             if (inviteToken) redirectUrl.searchParams.set('invite', inviteToken);
             const { error: signInError } = await supabase.auth.signInWithOtp({
               email: email.trim(),
