@@ -1,5 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Archive,
+  ArchiveRestore,
   Camera,
   CheckCircle2,
   ClipboardList,
@@ -7,6 +9,7 @@ import {
   Download,
   File as FileIcon,
   FileText,
+  Globe2,
   Inbox,
   Loader2,
   Lock,
@@ -36,6 +39,7 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 import {
   AppComment,
   AppAttachment,
+  AppLinkPreview,
   AppPost,
   AppProfile,
   AppSpace,
@@ -51,7 +55,7 @@ import {
 const sortOptions: { value: SortMode; label: string }[] = [
   { value: 'active', label: 'Active' },
   { value: 'newest', label: 'Newest' },
-  { value: 'decisions', label: 'Decisions' },
+  { value: 'insights', label: 'Insights' },
   { value: 'assigned', label: 'Assigned' },
   { value: 'archived', label: 'Archived' },
 ];
@@ -66,6 +70,7 @@ const workspaceRoles: { role: WorkspaceRole; detail: string }[] = [
 const INVITE_STORAGE_KEY = 'tribu_invite_token';
 const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
 const PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone, phone, address, bio';
+const linkPreviewCache = new Map<string, AppLinkPreview>();
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -112,6 +117,8 @@ export default function App() {
     const base = posts.filter((post) => {
       if (sort === 'archived') return post.state === 'archived';
       if (post.state === 'archived') return false;
+      if (sort === 'insights') return post.has_decision;
+      if (sort === 'assigned') return post.metadata?.assigned_to === session?.user.id;
       return true;
     });
 
@@ -121,11 +128,9 @@ export default function App() {
 
     return [...searched].sort((a, b) => {
       if (sort === 'newest') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      if (sort === 'decisions') return Number(b.has_decision) - Number(a.has_decision);
-      if (sort === 'assigned') return Number(Boolean(b.metadata?.assigned_to)) - Number(Boolean(a.metadata?.assigned_to));
       return new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime();
     });
-  }, [posts, query, sort]);
+  }, [posts, query, session?.user.id, sort]);
 
   const loadWorkspaceData = useCallback(async (targetWorkspaceId: string, silent = false) => {
     if (!supabase || !targetWorkspaceId) return;
@@ -545,9 +550,27 @@ export default function App() {
                               profile={profiles[post.author_id]}
                               theme={theme}
                               space={spaces.find((item) => item.id === post.space_id)}
+                              members={memberProfiles}
                               onClick={() => setSelectedPostId(post.id)}
                               canManage={post.author_id === session.user.id || canManageAdmin}
                               onEdit={() => setEditingPost(post)}
+                              onAssign={async (assigneeId) => {
+                                try {
+                                  await assignPost(post.id, assigneeId);
+                                  await loadWorkspaceData(workspaceId, true);
+                                } catch (caughtError) {
+                                  setNotice(getErrorMessage(caughtError));
+                                }
+                              }}
+                              onArchive={async () => {
+                                try {
+                                  await setPostArchived(post.id, post.state !== 'archived');
+                                  if (selectedPostId === post.id) setSelectedPostId('');
+                                  await loadWorkspaceData(workspaceId, true);
+                                } catch (caughtError) {
+                                  setNotice(getErrorMessage(caughtError));
+                                }
+                              }}
                               onDelete={async () => {
                                 if (!window.confirm('Delete this post and its discussion?')) return;
                                 try {
@@ -614,6 +637,15 @@ export default function App() {
                   }}
                   canManagePost={(post) => post.author_id === session.user.id || canManageAdmin}
                   onEditPost={(post) => setEditingPost(post)}
+                  onArchivePost={async (post) => {
+                    try {
+                      await setPostArchived(post.id, true);
+                      if (selectedPostId === post.id) setSelectedPostId('');
+                      await loadWorkspaceData(workspaceId, true);
+                    } catch (caughtError) {
+                      setNotice(getErrorMessage(caughtError));
+                    }
+                  }}
                   onDeletePost={async (post) => {
                     if (!window.confirm('Delete this knowledge entry and its discussion?')) return;
                     try {
@@ -642,9 +674,9 @@ export default function App() {
               attachments={attachments}
               profiles={profiles}
               theme={theme}
-              onReply={async (body, isDecision, files) => {
+              onReply={async (body, isInsight, files) => {
                 if (!selectedPost || !session.user) return;
-                await createComment(selectedPost, session.user.id, body, isDecision, files);
+                await createComment(selectedPost, session.user.id, body, isInsight, files);
                 await loadWorkspaceData(workspaceId, true);
                 await loadComments(selectedPost.id);
               }}
@@ -759,13 +791,6 @@ function AmbientMotifs({ theme }: { theme: 'light' | 'dark' }) {
           'linear-gradient(90deg, rgba(33,26,22,0.035) 1px, transparent 1px), linear-gradient(rgba(33,26,22,0.035) 1px, transparent 1px), radial-gradient(circle at 78% 8%, rgba(233,185,62,0.22), transparent 22rem)',
         backgroundSize: '36px 36px, 36px 36px, auto',
       }} />
-      <svg className={cn('absolute right-8 top-6 h-72 w-72', theme === 'dark' ? 'text-[#F7D774]/10' : 'text-[#211A16]/10')} viewBox="0 0 200 200" aria-hidden="true">
-        <g fill="none" stroke="currentColor" strokeLinecap="square" strokeWidth="10">
-          <circle cx="100" cy="100" r="34" />
-          <path d="M100 8v38M100 154v38M8 100h38M154 100h38M35 35l27 27M138 138l27 27M165 35l-27 27M62 138l-27 27" />
-          <path d="M100 8l13 38M100 8 87 46M100 192l13-38M100 192l-13-38M8 100l38-13M8 100l38 13M192 100l-38-13M192 100l-38 13" />
-        </g>
-      </svg>
     </div>
   );
 }
@@ -892,13 +917,13 @@ function Sidebar({
 
 function Metrics({ posts, tasks, theme }: { posts: AppPost[]; tasks: AppTask[]; theme: 'light' | 'dark' }) {
   const openPosts = posts.filter((post) => post.state === 'open').length;
-  const decisions = posts.filter((post) => post.has_decision).length;
+  const insights = posts.filter((post) => post.has_decision).length;
   const openTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'canceled').length;
 
   return (
     <div className="grid shrink-0 gap-3 sm:grid-cols-3">
       <MetricCard label="Open posts" value={openPosts} theme={theme} />
-      <MetricCard label="Decisions" value={decisions} theme={theme} />
+      <MetricCard label="Insights" value={insights} theme={theme} />
       <MetricCard label="Open tasks" value={openTasks} theme={theme} />
     </div>
   );
@@ -935,9 +960,12 @@ function PostRow({
   profile,
   theme,
   space,
+  members,
   onClick,
   canManage,
   onEdit,
+  onAssign,
+  onArchive,
   onDelete,
 }: {
   post: AppPost;
@@ -945,9 +973,12 @@ function PostRow({
   profile?: AppProfile;
   theme: 'light' | 'dark';
   space?: AppSpace;
+  members: AppProfile[];
   onClick: () => void;
   canManage: boolean;
   onEdit: () => void;
+  onAssign: (assigneeId: string) => Promise<void>;
+  onArchive: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   return (
@@ -972,8 +1003,37 @@ function PostRow({
           <Avatar profile={profile} />
           <span className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
         </div>
-        {canManage && (
-          <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <label className="sr-only" htmlFor={`assignee-${post.id}`}>Assign post</label>
+          <select
+            id={`assignee-${post.id}`}
+            value={typeof post.metadata?.assigned_to === 'string' ? post.metadata.assigned_to : ''}
+            disabled={post.state === 'archived'}
+            title="Assign post"
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              event.stopPropagation();
+              void onAssign(event.target.value);
+            }}
+            className={cn('h-9 max-w-40 rounded-lg border px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60', subtleButton(theme))}
+          >
+            <option value="">Unassigned</option>
+            {members.map((member) => <option key={member.id} value={member.id}>{member.display_name}</option>)}
+          </select>
+          <button
+            type="button"
+            aria-label={post.state === 'archived' ? 'Restore post' : 'Archive post'}
+            title={post.state === 'archived' ? 'Restore post' : 'Archive post'}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onArchive();
+            }}
+            className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
+          >
+            {post.state === 'archived' ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+          </button>
+          {canManage && (
+            <>
             <button
               type="button"
               aria-label="Edit post"
@@ -998,8 +1058,9 @@ function PostRow({
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1020,11 +1081,11 @@ function ThreadPanel({
   attachments: AppAttachment[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
-  onReply: (body: string, isDecision: boolean, files: File[]) => Promise<void>;
+  onReply: (body: string, isInsight: boolean, files: File[]) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
   const [files, setFiles] = useState<File[]>([]);
-  const [isDecision, setIsDecision] = useState(false);
+  const [isInsight, setIsInsight] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
@@ -1061,7 +1122,7 @@ function ThreadPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-5 scroll-area">
-        <ThreadCard profile={profile} body={post.body} timestamp={post.created_at} theme={theme} />
+        <ThreadCard profile={profile} body={post.body} timestamp={post.created_at} theme={theme} workspaceId={post.workspace_id} />
         <div className="mt-4 space-y-3">
           {comments.map((comment) => (
             <div key={comment.id}>
@@ -1070,8 +1131,9 @@ function ThreadPanel({
                 body={comment.body}
                 timestamp={comment.created_at}
                 theme={theme}
-                isDecision={comment.is_decision}
+                isInsight={comment.is_decision}
                 attachments={attachments.filter((attachment) => attachment.comment_id === comment.id)}
+                workspaceId={comment.workspace_id}
               />
             </div>
           ))}
@@ -1095,10 +1157,10 @@ function ThreadPanel({
           setSubmitting(true);
           setError('');
           try {
-            await onReply(reply.trim(), isDecision, files);
+            await onReply(reply.trim(), isInsight, files);
             setReply('');
             setFiles([]);
-            setIsDecision(false);
+            setIsInsight(false);
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -1148,8 +1210,8 @@ function ThreadPanel({
             <Plus className="h-4 w-4" />
           </button>
           <label className={cn('flex items-center gap-2 text-sm', muted(theme))}>
-            <input type="checkbox" checked={isDecision} onChange={(event) => setIsDecision(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
-            Decision
+            <input type="checkbox" checked={isInsight} onChange={(event) => setIsInsight(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
+            Insight
           </label>
           <button disabled={submitting || (!reply.trim() && files.length === 0)} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -1161,7 +1223,8 @@ function ThreadPanel({
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, isDecision, attachments = [] }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; isDecision?: boolean; attachments?: AppAttachment[] }) {
+function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, attachments = [] }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; isInsight?: boolean; attachments?: AppAttachment[] }) {
+  const urls = extractUrls(body);
   return (
     <div className={cn('rounded-lg border p-4', surface(theme))}>
       <div className="mb-3 flex items-center gap-3">
@@ -1170,9 +1233,14 @@ function ThreadCard({ profile, body, timestamp, theme, isDecision, attachments =
           <p className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</p>
           <p className={cn('text-xs', muted(theme))}>{formatTimeAgo(timestamp)}</p>
         </div>
-        {isDecision && <CheckCircle2 className="ml-auto h-4 w-4 text-[#0F766E]" />}
+        {isInsight && <CheckCircle2 className="ml-auto h-4 w-4 text-[#0F766E]" />}
       </div>
-      {body && <p className={cn('whitespace-pre-wrap text-sm leading-6', muted(theme))}>{body}</p>}
+      {body && <RichMessageText body={body} theme={theme} />}
+      {urls.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {urls.map((url) => <div key={url}><LinkPreviewCard url={url} workspaceId={workspaceId} theme={theme} /></div>)}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className={cn('grid gap-2', body && 'mt-3')}>
           {attachments.map((attachment) => (
@@ -1183,6 +1251,45 @@ function ThreadCard({ profile, body, timestamp, theme, isDecision, attachments =
         </div>
       )}
     </div>
+  );
+}
+
+function RichMessageText({ body, theme }: { body: string; theme: 'light' | 'dark' }) {
+  const parts = body.split(/(https?:\/\/[^\s<]+)/gi);
+  return (
+    <p className={cn('whitespace-pre-wrap break-words text-sm leading-6', muted(theme))}>
+      {parts.map((part, index) => {
+        const url = normalizeSharedUrl(part);
+        return url ? <a key={`${url}-${index}`} href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#0F766E] underline decoration-[#0F766E]/40 underline-offset-2">{part}</a> : part;
+      })}
+    </p>
+  );
+}
+
+function LinkPreviewCard({ url, workspaceId, theme }: { url: string; workspaceId: string; theme: 'light' | 'dark' }) {
+  const [preview, setPreview] = useState<AppLinkPreview | null>(() => linkPreviewCache.get(url) ?? null);
+
+  useEffect(() => {
+    if (!supabase || preview) return;
+    let active = true;
+    void supabase.functions.invoke<AppLinkPreview>('link-preview', { body: { url, workspaceId } }).then(({ data, error }) => {
+      if (!active || error || !data?.title) return;
+      linkPreviewCache.set(url, data);
+      setPreview(data);
+    });
+    return () => { active = false; };
+  }, [preview, url, workspaceId]);
+
+  if (!preview) return null;
+  return (
+    <a href={preview.url} target="_blank" rel="noreferrer" className={cn('grid overflow-hidden rounded-lg border transition hover:border-[#E9B93E]', preview.image && 'grid-cols-[96px_minmax(0,1fr)]', subtleButton(theme))}>
+      {preview.image && <img src={preview.image} alt="" className="h-full min-h-24 w-24 object-cover" />}
+      <span className="min-w-0 p-3">
+        <span className={cn('flex items-center gap-1.5 text-xs font-semibold', muted(theme))}><Globe2 className="h-3.5 w-3.5" />{preview.site_name}</span>
+        <span className="mt-1 block line-clamp-2 text-sm font-bold">{preview.title}</span>
+        {preview.description && <span className={cn('mt-1 block line-clamp-2 text-xs leading-5', muted(theme))}>{preview.description}</span>}
+      </span>
+    </a>
   );
 }
 
@@ -1293,6 +1400,7 @@ function KnowledgeView({
   onOpenPost,
   canManagePost,
   onEditPost,
+  onArchivePost,
   onDeletePost,
 }: {
   posts: AppPost[];
@@ -1302,6 +1410,7 @@ function KnowledgeView({
   onOpenPost: (postId: string) => void;
   canManagePost: (post: AppPost) => boolean;
   onEditPost: (post: AppPost) => void;
+  onArchivePost: (post: AppPost) => Promise<void>;
   onDeletePost: (post: AppPost) => Promise<void>;
 }) {
   const knowledgePosts = posts
@@ -1311,7 +1420,7 @@ function KnowledgeView({
   if (knowledgePosts.length === 0) {
     return (
       <StaticPanel theme={theme} title="Knowledge" icon={FileText}>
-        <EmptyState theme={theme} icon={FileText} title="No knowledge entries yet" body="Mark important replies as Decisions to turn active discussions into a searchable camp knowledge base." />
+        <EmptyState theme={theme} icon={FileText} title="No knowledge entries yet" body="Mark important replies as Insights to turn active discussions into a searchable camp knowledge base." />
       </StaticPanel>
     );
   }
@@ -1335,7 +1444,7 @@ function KnowledgeView({
               className={cn('w-full rounded-lg border p-4 text-left transition hover:border-[#E9B93E]', surface(theme))}
             >
               <div className="flex flex-wrap items-center gap-2">
-                {post.has_decision && <span className="rounded-full bg-[#D1FAE5] px-2.5 py-1 text-xs font-semibold text-[#065F46]">Decision</span>}
+                {post.has_decision && <span className="rounded-full bg-[#D1FAE5] px-2.5 py-1 text-xs font-semibold text-[#065F46]">Insight</span>}
                 {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#DFC9A4]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
                 <span className={cn('ml-auto text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
               </div>
@@ -1344,8 +1453,20 @@ function KnowledgeView({
               <div className="mt-4 flex items-center gap-3">
                 <Avatar profile={profile} />
                 <span className="text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
+                <button
+                  type="button"
+                  aria-label="Archive knowledge entry"
+                  title="Archive knowledge entry"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onArchivePost(post);
+                  }}
+                  className={cn('ml-auto inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                </button>
                 {canManage && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       aria-label="Edit knowledge entry"
@@ -2293,7 +2414,25 @@ async function deletePost(postId: string) {
   await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
 }
 
-async function createComment(post: AppPost, userId: string, body: string, isDecision: boolean, files: File[]) {
+async function assignPost(postId: string, assigneeId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('assign_post', {
+    target_post_id: postId,
+    target_user_id: assigneeId || null,
+  });
+  if (error) throw error;
+}
+
+async function setPostArchived(postId: string, archived: boolean) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('set_post_archived', {
+    target_post_id: postId,
+    should_archive: archived,
+  });
+  if (error) throw error;
+}
+
+async function createComment(post: AppPost, userId: string, body: string, isInsight: boolean, files: File[]) {
   if (!supabase) return;
   const { data: comment, error } = await supabase
     .from('comments')
@@ -2302,7 +2441,7 @@ async function createComment(post: AppPost, userId: string, body: string, isDeci
       post_id: post.id,
       author_id: userId,
       body,
-      is_decision: isDecision,
+      is_decision: isInsight,
     })
     .select('id')
     .single();
@@ -2490,6 +2629,22 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function normalizeSharedUrl(value: string) {
+  const candidate = value.trim().replace(/[),.;!?]+$/g, '');
+  if (!/^https?:\/\//i.test(candidate)) return null;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractUrls(value: string) {
+  const matches = value.match(/https?:\/\/[^\s<]+/gi) ?? [];
+  return [...new Set(matches.map(normalizeSharedUrl).filter((url): url is string => Boolean(url)))].slice(0, 3);
 }
 
 function getErrorMessage(error: unknown) {

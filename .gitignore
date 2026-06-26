@@ -23,6 +23,7 @@ pnpm-debug.log*
 .turbo/
 .cache/
 coverage/
+supabase/.temp/
 
 # Editor
 .idea/

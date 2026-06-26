@@ -2,7 +2,7 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'guest';
 export type SpaceAccess = 'public' | 'private' | 'invite_only';
 export type ContentState = 'open' | 'read_only' | 'locked' | 'archived';
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
-export type SortMode = 'active' | 'newest' | 'decisions' | 'assigned' | 'archived';
+export type SortMode = 'active' | 'newest' | 'insights' | 'assigned' | 'archived';
 export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'admin';
 
 export interface AppProfile {
@@ -83,6 +83,14 @@ export interface AppAttachment {
   byte_size: number;
   created_at: string;
   signed_url?: string;
+}
+
+export interface AppLinkPreview {
+  url: string;
+  title: string;
+  description: string;
+  image: string | null;
+  site_name: string;
 }
 
 export interface AppTask {
