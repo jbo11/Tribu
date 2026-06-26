@@ -93,6 +93,16 @@ export interface AppLinkPreview {
   site_name: string;
 }
 
+export interface AppReaction {
+  id: string;
+  workspace_id: string;
+  post_id: string | null;
+  comment_id: string | null;
+  user_id: string;
+  emoji: string;
+  created_at: string;
+}
+
 export interface AppTask {
   id: string;
   workspace_id: string;

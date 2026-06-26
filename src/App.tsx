@@ -1,15 +1,19 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
   Camera,
+  CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Copy,
   Download,
   File as FileIcon,
   FileText,
   Globe2,
+  Headphones,
+  Image as ImageIcon,
   Inbox,
   Loader2,
   Lock,
@@ -21,10 +25,14 @@ import {
   Pencil,
   Phone,
   Plus,
+  Reply as ReplyIcon,
   Search,
   Send,
   Settings,
+  Share2,
   ShieldCheck,
+  Smile,
+  Sticker,
   Sun,
   Trash2,
   User,
@@ -40,6 +48,7 @@ import {
   AppComment,
   AppAttachment,
   AppLinkPreview,
+  AppReaction,
   AppPost,
   AppProfile,
   AppSpace,
@@ -71,6 +80,7 @@ const INVITE_STORAGE_KEY = 'tribu_invite_token';
 const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
 const PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone, phone, address, bio';
 const linkPreviewCache = new Map<string, AppLinkPreview>();
+const THREAD_WIDTH_STORAGE_KEY = 'tribu_thread_width';
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -87,6 +97,7 @@ export default function App() {
   const [posts, setPosts] = useState<AppPost[]>([]);
   const [comments, setComments] = useState<AppComment[]>([]);
   const [attachments, setAttachments] = useState<AppAttachment[]>([]);
+  const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [profiles, setProfiles] = useState<Record<string, AppProfile>>({});
   const [tasks, setTasks] = useState<AppTask[]>([]);
   const [selectedPostId, setSelectedPostId] = useState('');
@@ -100,6 +111,7 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<AppTask | null>(null);
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
+  const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
@@ -320,10 +332,11 @@ export default function App() {
     if (!supabase || !postId) {
       setComments([]);
       setAttachments([]);
+      setReactions([]);
       return;
     }
 
-    const [commentResult, attachmentResult] = await Promise.all([
+    const [commentResult, attachmentResult, reactionResult] = await Promise.all([
       supabase
         .from('comments')
         .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
@@ -334,10 +347,15 @@ export default function App() {
         .select('id, workspace_id, post_id, comment_id, uploaded_by, bucket, object_path, filename, mime_type, byte_size, created_at')
         .eq('post_id', postId)
         .order('created_at', { ascending: true }),
+      supabase
+        .from('reactions')
+        .select('id, workspace_id, post_id, comment_id, user_id, emoji, created_at')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true }),
     ]);
 
-    if (commentResult.error || attachmentResult.error) {
-      setNotice(commentResult.error?.message ?? attachmentResult.error?.message ?? 'Messages could not be loaded.');
+    if (commentResult.error || attachmentResult.error || reactionResult.error) {
+      setNotice(commentResult.error?.message ?? attachmentResult.error?.message ?? reactionResult.error?.message ?? 'Messages could not be loaded.');
       return;
     }
 
@@ -350,6 +368,7 @@ export default function App() {
       }),
     );
     setAttachments(nextAttachments);
+    setReactions((reactionResult.data ?? []) as AppReaction[]);
 
     const authorIds = [...new Set(nextComments.map((comment) => comment.author_id))];
     if (authorIds.length) {
@@ -376,6 +395,9 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments', filter: `workspace_id=eq.${workspaceId}` }, () => {
         if (selectedPost?.id) void loadComments(selectedPost.id);
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions', filter: `workspace_id=eq.${workspaceId}` }, () => {
+        if (selectedPost?.id) void loadComments(selectedPost.id);
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
       })
@@ -394,6 +416,7 @@ export default function App() {
     if (!selectedPost?.id) {
       setComments([]);
       setAttachments([]);
+      setReactions([]);
       return;
     }
     void loadComments(selectedPost.id);
@@ -527,7 +550,10 @@ export default function App() {
             </label>
           </header>
 
-          <div className="grid min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1fr)_390px]">
+          <div
+            className="grid min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]"
+            style={{ '--thread-width': `${threadWidth}px` } as CSSProperties}
+          >
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
               {notice && (
                 <div className="mb-4 rounded-lg border border-[#E9B93E] bg-[#FFF3C4] px-4 py-3 text-sm text-[#8F4F2E]">
@@ -672,12 +698,31 @@ export default function App() {
               profile={selectedProfile}
               comments={comments}
               attachments={attachments}
+              reactions={reactions}
               profiles={profiles}
               theme={theme}
-              onReply={async (body, isInsight, files) => {
+              currentUserId={session.user.id}
+              canManage={canManageAdmin}
+              width={threadWidth}
+              onWidthChange={(width) => {
+                const nextWidth = clampThreadWidth(width);
+                setThreadWidth(nextWidth);
+                window.localStorage.setItem(THREAD_WIDTH_STORAGE_KEY, String(nextWidth));
+              }}
+              onReply={async (body, isInsight, files, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
-                await createComment(selectedPost, session.user.id, body, isInsight, files);
+                await createComment(selectedPost, session.user.id, body, isInsight, files, parentCommentId);
                 await loadWorkspaceData(workspaceId, true);
+                await loadComments(selectedPost.id);
+              }}
+              onReact={async (commentId, emoji) => {
+                if (!selectedPost || !session.user) return;
+                await toggleReaction(selectedPost, commentId, session.user.id, emoji);
+                await loadComments(selectedPost.id);
+              }}
+              onDeleteComment={async (commentId) => {
+                if (!selectedPost) return;
+                await deleteComment(commentId);
                 await loadComments(selectedPost.id);
               }}
             />
@@ -1017,7 +1062,7 @@ function PostRow({
             }}
             className={cn('h-9 max-w-40 rounded-lg border px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60', subtleButton(theme))}
           >
-            <option value="">Unassigned</option>
+            <option value="">All</option>
             {members.map((member) => <option key={member.id} value={member.id}>{member.display_name}</option>)}
           </select>
           <button
@@ -1071,17 +1116,31 @@ function ThreadPanel({
   profile,
   comments,
   attachments,
+  reactions,
   profiles,
   theme,
+  currentUserId,
+  canManage,
+  width,
+  onWidthChange,
   onReply,
+  onReact,
+  onDeleteComment,
 }: {
   post?: AppPost;
   profile?: AppProfile;
   comments: AppComment[];
   attachments: AppAttachment[];
+  reactions: AppReaction[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
-  onReply: (body: string, isInsight: boolean, files: File[]) => Promise<void>;
+  currentUserId: string;
+  canManage: boolean;
+  width: number;
+  onWidthChange: (width: number) => void;
+  onReply: (body: string, isInsight: boolean, files: File[], parentCommentId: string | null) => Promise<void>;
+  onReact: (commentId: string | null, emoji: string) => Promise<void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -1089,12 +1148,25 @@ function ThreadPanel({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<AppComment | null>(null);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const attachmentMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [post?.id, comments.length, attachments.length]);
+  }, [post?.id, comments.length, attachments.length, reactions.length]);
+
+  useEffect(() => {
+    if (!attachmentMenuOpen) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (!attachmentMenuRef.current?.contains(event.target as Node)) setAttachmentMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', closeMenu);
+    return () => document.removeEventListener('pointerdown', closeMenu);
+  }, [attachmentMenuOpen]);
 
   const addFiles = (incoming: FileList | File[]) => {
     const accepted = Array.from(incoming).filter((file) => file.size <= 100 * 1024 * 1024);
@@ -1102,16 +1174,27 @@ function ThreadPanel({
     if (accepted.length !== Array.from(incoming).length) setError('Each attachment must be 100 MB or smaller.');
   };
 
+  const openFilePicker = (accept: string, capture = false) => {
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.accept = accept;
+    if (capture) input.setAttribute('capture', 'environment');
+    else input.removeAttribute('capture');
+    input.click();
+  };
+
   if (!post) {
     return (
-      <aside className={cn('hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
+      <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
+        <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
         <EmptyState theme={theme} icon={MessageSquare} title="No thread selected" body="Select or create a post to view its discussion." />
       </aside>
     );
   }
 
   return (
-    <aside className={cn('hidden min-h-0 overflow-hidden border-l xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
+    <aside className={cn('relative hidden min-h-0 overflow-hidden border-l xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
+      <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
       <div className="shrink-0 border-b border-inherit p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -1122,7 +1205,17 @@ function ThreadPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-5 scroll-area">
-        <ThreadCard profile={profile} body={post.body} timestamp={post.created_at} theme={theme} workspaceId={post.workspace_id} />
+        <ThreadCard
+          profile={profile}
+          body={post.body}
+          timestamp={post.created_at}
+          theme={theme}
+          workspaceId={post.workspace_id}
+          reactions={reactions.filter((reaction) => reaction.post_id === post.id && !reaction.comment_id)}
+          currentUserId={currentUserId}
+          onReply={() => { setReplyingTo(null); textareaRef.current?.focus(); }}
+          onReact={(emoji) => onReact(null, emoji)}
+        />
         <div className="mt-4 space-y-3">
           {comments.map((comment) => (
             <div key={comment.id}>
@@ -1134,6 +1227,15 @@ function ThreadPanel({
                 isInsight={comment.is_decision}
                 attachments={attachments.filter((attachment) => attachment.comment_id === comment.id)}
                 workspaceId={comment.workspace_id}
+                reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
+                currentUserId={currentUserId}
+                parentComment={comments.find((item) => item.id === comment.parent_comment_id)}
+                onReply={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
+                onReact={(emoji) => onReact(comment.id, emoji)}
+                onDelete={comment.author_id === currentUserId || canManage ? async () => {
+                  if (!window.confirm('Delete this message?')) return;
+                  await onDeleteComment(comment.id);
+                } : undefined}
               />
             </div>
           ))}
@@ -1157,10 +1259,11 @@ function ThreadPanel({
           setSubmitting(true);
           setError('');
           try {
-            await onReply(reply.trim(), isInsight, files);
+            await onReply(reply.trim(), isInsight, files, replyingTo?.id ?? null);
             setReply('');
             setFiles([]);
             setIsInsight(false);
+            setReplyingTo(null);
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -1176,9 +1279,21 @@ function ThreadPanel({
           onChange={(event) => {
             if (event.target.files) addFiles(event.target.files);
             event.target.value = '';
+            setAttachmentMenuOpen(false);
           }}
         />
+        {replyingTo && (
+          <div className={cn('mb-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
+            <ReplyIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <strong>{profiles[replyingTo.author_id]?.display_name ?? 'Camp member'}</strong>
+              <span className={cn('ml-2 line-clamp-1', muted(theme))}>{replyingTo.body || 'Attachment'}</span>
+            </span>
+            <button type="button" aria-label="Cancel reply" title="Cancel reply" onClick={() => setReplyingTo(null)}><X className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
         <textarea
+          ref={textareaRef}
           value={reply}
           onChange={(event) => setReply(event.target.value)}
           placeholder="Reply to this post"
@@ -1200,15 +1315,30 @@ function ThreadPanel({
         {dragActive && <p className="mt-2 text-center text-sm font-semibold text-[#8F4F2E]">Drop files to attach</p>}
         {error && <p className="mt-2 text-sm font-semibold text-[#B91C1C]">{error}</p>}
         <div className="mt-3 flex items-center gap-3">
-          <button
-            type="button"
-            aria-label="Add attachments"
-            title="Add images, videos, or files"
-            onClick={() => fileInputRef.current?.click()}
-            className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+          <div ref={attachmentMenuRef} className="relative">
+            <button
+              type="button"
+              aria-label="Add attachments"
+              title="Add attachment"
+              aria-expanded={attachmentMenuOpen}
+              onClick={() => setAttachmentMenuOpen((open) => !open)}
+              className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            {attachmentMenuOpen && (
+              <AttachmentMenu
+                theme={theme}
+                onDocument={() => openFilePicker('.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip')}
+                onMedia={() => openFilePicker('image/*,video/*')}
+                onCamera={() => openFilePicker('image/*,video/*', true)}
+                onAudio={() => openFilePicker('audio/*')}
+                onContact={() => openFilePicker('.vcf,text/vcard')}
+                onEvent={() => openFilePicker('.ics,text/calendar')}
+                onSticker={() => openFilePicker('image/gif,image/webp,image/png')}
+              />
+            )}
+          </div>
           <label className={cn('flex items-center gap-2 text-sm', muted(theme))}>
             <input type="checkbox" checked={isInsight} onChange={(event) => setIsInsight(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
             Insight
@@ -1223,18 +1353,45 @@ function ThreadPanel({
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, attachments = [] }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; isInsight?: boolean; attachments?: AppAttachment[] }) {
+function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; isInsight?: boolean; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const reactionGroups = groupReactions(reactions);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+        setReactionPickerOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', closeMenu);
+    return () => document.removeEventListener('pointerdown', closeMenu);
+  }, [menuOpen]);
+
+  const runAction = async (action: () => Promise<void>) => {
+    setActionError('');
+    try { await action(); } catch (caughtError) { setActionError(getErrorMessage(caughtError)); }
+  };
+
   return (
-    <div className={cn('rounded-lg border p-4', surface(theme))}>
+    <div className={cn('relative rounded-lg border p-4', surface(theme))}>
       <div className="mb-3 flex items-center gap-3">
         <Avatar profile={profile} />
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</p>
-          <p className={cn('text-xs', muted(theme))}>{formatTimeAgo(timestamp)}</p>
         </div>
         {isInsight && <CheckCircle2 className="ml-auto h-4 w-4 text-[#0F766E]" />}
       </div>
+      {parentComment && (
+        <div className={cn('mb-3 border-l-2 border-[#E9B93E] pl-3 text-xs', muted(theme))}>
+          <strong>{parentComment.body ? parentComment.body.slice(0, 90) : 'Attachment'}</strong>
+        </div>
+      )}
       {body && <RichMessageText body={body} theme={theme} />}
       {urls.length > 0 && (
         <div className="mt-3 grid gap-2">
@@ -1250,7 +1407,101 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, a
           ))}
         </div>
       )}
+      <div className="mt-3 flex min-h-7 flex-wrap items-end gap-2">
+        {reactionGroups.map((group) => (
+          <button key={group.emoji} type="button" onClick={() => void runAction(() => onReact(group.emoji))} className={cn('inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs', group.userIds.includes(currentUserId) ? 'border-[#E9B93E] bg-[#FFF3C4] text-[#211A16]' : subtleButton(theme))}>
+            <span>{group.emoji}</span><span>{group.count}</span>
+          </button>
+        ))}
+        <div ref={menuRef} className="relative ml-auto flex items-center gap-1">
+          <span className={cn('text-[11px]', muted(theme))}>{formatMessageTime(timestamp)}</span>
+          <button type="button" aria-label="Message actions" title="Message actions" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {menuOpen && (
+            <div className={cn('absolute bottom-8 right-0 z-30 w-48 rounded-lg border p-1.5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+              {reactionPickerOpen && (
+                <div className="mb-1 flex items-center justify-between border-b border-inherit p-1.5">
+                  {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => <button key={emoji} type="button" onClick={() => { void runAction(() => onReact(emoji)); setMenuOpen(false); }} className="h-7 w-7 rounded-md text-base hover:bg-black/5">{emoji}</button>)}
+                </div>
+              )}
+              <MessageMenuButton icon={ReplyIcon} label="Reply" onClick={() => { onReply(); setMenuOpen(false); }} />
+              <MessageMenuButton icon={Copy} label="Copy" onClick={() => { void navigator.clipboard.writeText(body); setMenuOpen(false); }} />
+              <MessageMenuButton icon={Smile} label="React" onClick={() => setReactionPickerOpen((open) => !open)} />
+              <MessageMenuButton icon={Share2} label="Forward" onClick={() => {
+                if (navigator.share) void navigator.share({ text: body });
+                else void navigator.clipboard.writeText(body);
+                setMenuOpen(false);
+              }} />
+              {onDelete && <MessageMenuButton icon={Trash2} label="Delete" danger onClick={() => { void runAction(onDelete); setMenuOpen(false); }} />}
+            </div>
+          )}
+        </div>
+      </div>
+      {actionError && <p className="mt-2 text-xs font-semibold text-[#B91C1C]">{actionError}</p>}
     </div>
+  );
+}
+
+function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 'dark'; width: number; onWidthChange: (width: number) => void }) {
+  const dragStartRef = useRef<{ x: number; width: number } | null>(null);
+  return (
+    <div
+      role="separator"
+      aria-label="Resize discussion pane"
+      aria-orientation="vertical"
+      aria-valuemin={320}
+      aria-valuemax={720}
+      aria-valuenow={Math.round(width)}
+      tabIndex={0}
+      title="Drag to resize discussion pane"
+      onPointerDown={(event) => {
+        dragStartRef.current = { x: event.clientX, width };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        if (!dragStartRef.current) return;
+        onWidthChange(dragStartRef.current.width + dragStartRef.current.x - event.clientX);
+      }}
+      onPointerUp={() => { dragStartRef.current = null; }}
+      onLostPointerCapture={() => { dragStartRef.current = null; }}
+      onKeyDown={(event) => {
+        if (event.key === 'ArrowLeft') { event.preventDefault(); onWidthChange(width + 24); }
+        if (event.key === 'ArrowRight') { event.preventDefault(); onWidthChange(width - 24); }
+      }}
+      className={cn('absolute inset-y-0 left-0 z-40 w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[#E9B93E]' : 'after:bg-[#DFC9A4] hover:after:bg-[#8F4F2E]')}
+    />
+  );
+}
+
+function AttachmentMenu({ theme, onDocument, onMedia, onCamera, onAudio, onContact, onEvent, onSticker }: { theme: 'light' | 'dark'; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void; onContact: () => void; onEvent: () => void; onSticker: () => void }) {
+  const items: { label: string; icon: LucideIcon; action: () => void; color: string }[] = [
+    { label: 'Document', icon: FileText, action: onDocument, color: 'text-[#7C3AED]' },
+    { label: 'Photos & videos', icon: ImageIcon, action: onMedia, color: 'text-[#2563EB]' },
+    { label: 'Camera', icon: Camera, action: onCamera, color: 'text-[#DB2777]' },
+    { label: 'Audio', icon: Headphones, action: onAudio, color: 'text-[#EA580C]' },
+    { label: 'Contact', icon: User, action: onContact, color: 'text-[#0284C7]' },
+    { label: 'Event', icon: CalendarDays, action: onEvent, color: 'text-[#C026D3]' },
+    { label: 'Sticker', icon: Sticker, action: onSticker, color: 'text-[#0F766E]' },
+  ];
+  return (
+    <div className={cn('absolute bottom-12 left-0 z-40 w-56 rounded-lg border p-2 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+      {items.map(({ label, icon: Icon, action, color }) => (
+        <button key={label} type="button" onClick={action} className={cn('flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+          <Icon className={cn('h-4 w-4', color)} />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MessageMenuButton({ icon: Icon, label, onClick, danger = false }: { icon: LucideIcon; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button type="button" onClick={onClick} className={cn('flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition hover:bg-black/5', danger && 'text-[#B91C1C]')}>
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
   );
 }
 
@@ -1300,6 +1551,9 @@ function AttachmentPreview({ attachment, theme }: { attachment: AppAttachment; t
   }
   if (attachment.mime_type.startsWith('video/')) {
     return <video src={attachment.signed_url} controls preload="metadata" className="max-h-64 w-full rounded-lg border" />;
+  }
+  if (attachment.mime_type.startsWith('audio/')) {
+    return <audio src={attachment.signed_url} controls preload="metadata" className="w-full" />;
   }
   return (
     <a href={attachment.signed_url} target="_blank" rel="noreferrer" className={cn('flex items-center gap-3 rounded-lg border p-3 text-sm', subtleButton(theme))}>
@@ -2432,7 +2686,7 @@ async function setPostArchived(postId: string, archived: boolean) {
   if (error) throw error;
 }
 
-async function createComment(post: AppPost, userId: string, body: string, isInsight: boolean, files: File[]) {
+async function createComment(post: AppPost, userId: string, body: string, isInsight: boolean, files: File[], parentCommentId: string | null) {
   if (!supabase) return;
   const { data: comment, error } = await supabase
     .from('comments')
@@ -2442,6 +2696,7 @@ async function createComment(post: AppPost, userId: string, body: string, isInsi
       author_id: userId,
       body,
       is_decision: isInsight,
+      parent_comment_id: parentCommentId,
     })
     .select('id')
     .single();
@@ -2449,6 +2704,45 @@ async function createComment(post: AppPost, userId: string, body: string, isInsi
   for (const file of files) {
     await uploadCommentAttachment(post, comment.id, userId, file);
   }
+}
+
+async function toggleReaction(post: AppPost, commentId: string | null, userId: string, emoji: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  let query = supabase
+    .from('reactions')
+    .select('id')
+    .eq('post_id', post.id)
+    .eq('user_id', userId)
+    .eq('emoji', emoji);
+  query = commentId ? query.eq('comment_id', commentId) : query.is('comment_id', null);
+  const { data: existing, error: lookupError } = await query.limit(1).maybeSingle();
+  if (lookupError) throw lookupError;
+
+  if (existing) {
+    const { error } = await supabase.from('reactions').delete().eq('id', existing.id);
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from('reactions').insert({
+    workspace_id: post.workspace_id,
+    post_id: post.id,
+    comment_id: commentId,
+    user_id: userId,
+    emoji,
+  });
+  if (error) throw error;
+}
+
+async function deleteComment(commentId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data: attachmentRows } = await supabase.from('attachments').select('bucket, object_path').eq('comment_id', commentId);
+  const { data, error } = await supabase.from('comments').delete().eq('id', commentId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('This message could not be deleted.');
+  const pathsByBucket = new Map<string, string[]>();
+  (attachmentRows ?? []).forEach((attachment) => pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]));
+  await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
 }
 
 async function uploadCommentAttachment(post: AppPost, commentId: string, userId: string, file: File) {
@@ -2629,6 +2923,32 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatMessageTime(timestamp: string) {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+}
+
+function groupReactions(reactions: AppReaction[]) {
+  const groups = new Map<string, { emoji: string; count: number; userIds: string[] }>();
+  reactions.forEach((reaction) => {
+    const group = groups.get(reaction.emoji) ?? { emoji: reaction.emoji, count: 0, userIds: [] };
+    group.count += 1;
+    group.userIds.push(reaction.user_id);
+    groups.set(reaction.emoji, group);
+  });
+  return [...groups.values()];
+}
+
+function clampThreadWidth(width: number) {
+  const viewportMaximum = typeof window === 'undefined' ? 720 : Math.max(320, Math.min(720, window.innerWidth * 0.55));
+  return Math.round(Math.min(viewportMaximum, Math.max(320, width)));
+}
+
+function getInitialThreadWidth() {
+  if (typeof window === 'undefined') return 390;
+  const savedWidth = Number(window.localStorage.getItem(THREAD_WIDTH_STORAGE_KEY));
+  return clampThreadWidth(Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : 390);
 }
 
 function normalizeSharedUrl(value: string) {
