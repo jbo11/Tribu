@@ -70,6 +70,21 @@ export interface AppComment {
   updated_at: string;
 }
 
+export interface AppAttachment {
+  id: string;
+  workspace_id: string;
+  post_id: string | null;
+  comment_id: string | null;
+  uploaded_by: string;
+  bucket: string;
+  object_path: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  created_at: string;
+  signed_url?: string;
+}
+
 export interface AppTask {
   id: string;
   workspace_id: string;

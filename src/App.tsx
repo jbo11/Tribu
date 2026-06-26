@@ -4,6 +4,8 @@ import {
   CheckCircle2,
   ClipboardList,
   Copy,
+  Download,
+  File as FileIcon,
   FileText,
   Inbox,
   Loader2,
@@ -33,6 +35,7 @@ import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import {
   AppComment,
+  AppAttachment,
   AppPost,
   AppProfile,
   AppSpace,
@@ -78,6 +81,7 @@ export default function App() {
   const [activeSpaceId, setActiveSpaceId] = useState('all');
   const [posts, setPosts] = useState<AppPost[]>([]);
   const [comments, setComments] = useState<AppComment[]>([]);
+  const [attachments, setAttachments] = useState<AppAttachment[]>([]);
   const [profiles, setProfiles] = useState<Record<string, AppProfile>>({});
   const [tasks, setTasks] = useState<AppTask[]>([]);
   const [selectedPostId, setSelectedPostId] = useState('');
@@ -310,22 +314,37 @@ export default function App() {
   const loadComments = useCallback(async (postId: string) => {
     if (!supabase || !postId) {
       setComments([]);
+      setAttachments([]);
       return;
     }
 
-    const { data, error } = await supabase
-      .from('comments')
-      .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
-      .eq('post_id', postId)
-      .order('created_at', { ascending: true });
+    const [commentResult, attachmentResult] = await Promise.all([
+      supabase
+        .from('comments')
+        .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('attachments')
+        .select('id, workspace_id, post_id, comment_id, uploaded_by, bucket, object_path, filename, mime_type, byte_size, created_at')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true }),
+    ]);
 
-    if (error) {
-      setNotice(error.message);
+    if (commentResult.error || attachmentResult.error) {
+      setNotice(commentResult.error?.message ?? attachmentResult.error?.message ?? 'Messages could not be loaded.');
       return;
     }
 
-    const nextComments = (data ?? []) as AppComment[];
+    const nextComments = (commentResult.data ?? []) as AppComment[];
     setComments(nextComments);
+    const nextAttachments = await Promise.all(
+      ((attachmentResult.data ?? []) as AppAttachment[]).map(async (attachment) => {
+        const { data } = await supabase.storage.from(attachment.bucket).createSignedUrl(attachment.object_path, 3600);
+        return { ...attachment, signed_url: data?.signedUrl };
+      }),
+    );
+    setAttachments(nextAttachments);
 
     const authorIds = [...new Set(nextComments.map((comment) => comment.author_id))];
     if (authorIds.length) {
@@ -349,6 +368,9 @@ export default function App() {
         void loadWorkspaceData(workspaceId, true);
         if (selectedPost?.id) void loadComments(selectedPost.id);
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments', filter: `workspace_id=eq.${workspaceId}` }, () => {
+        if (selectedPost?.id) void loadComments(selectedPost.id);
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
       })
@@ -366,6 +388,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedPost?.id) {
       setComments([]);
+      setAttachments([]);
       return;
     }
     void loadComments(selectedPost.id);
@@ -527,9 +550,13 @@ export default function App() {
                               onEdit={() => setEditingPost(post)}
                               onDelete={async () => {
                                 if (!window.confirm('Delete this post and its discussion?')) return;
-                                await deletePost(post.id);
-                                if (selectedPostId === post.id) setSelectedPostId('');
-                                await loadWorkspaceData(workspaceId, true);
+                                try {
+                                  await deletePost(post.id);
+                                  if (selectedPostId === post.id) setSelectedPostId('');
+                                  await loadWorkspaceData(workspaceId, true);
+                                } catch (caughtError) {
+                                  setNotice(getErrorMessage(caughtError));
+                                }
                               }}
                             />
                           </div>
@@ -558,12 +585,20 @@ export default function App() {
                   onEditTask={(task) => setEditingTask(task)}
                   onDeleteTask={async (task) => {
                     if (!window.confirm('Delete this task?')) return;
-                    await deleteTask(task.id);
-                    await loadWorkspaceData(workspaceId, true);
+                    try {
+                      await deleteTask(task.id);
+                      await loadWorkspaceData(workspaceId, true);
+                    } catch (caughtError) {
+                      setNotice(getErrorMessage(caughtError));
+                    }
                   }}
                   onStatusChange={async (taskId, status) => {
-                    await updateTaskStatus(taskId, status);
-                    await loadWorkspaceData(workspaceId, true);
+                    try {
+                      await updateTaskStatus(taskId, status);
+                      await loadWorkspaceData(workspaceId, true);
+                    } catch (caughtError) {
+                      setNotice(getErrorMessage(caughtError));
+                    }
                   }}
                 />
               )}
@@ -581,9 +616,13 @@ export default function App() {
                   onEditPost={(post) => setEditingPost(post)}
                   onDeletePost={async (post) => {
                     if (!window.confirm('Delete this knowledge entry and its discussion?')) return;
-                    await deletePost(post.id);
-                    if (selectedPostId === post.id) setSelectedPostId('');
-                    await loadWorkspaceData(workspaceId, true);
+                    try {
+                      await deletePost(post.id);
+                      if (selectedPostId === post.id) setSelectedPostId('');
+                      await loadWorkspaceData(workspaceId, true);
+                    } catch (caughtError) {
+                      setNotice(getErrorMessage(caughtError));
+                    }
                   }}
                 />
               )}
@@ -600,11 +639,12 @@ export default function App() {
               post={selectedPost}
               profile={selectedProfile}
               comments={comments}
+              attachments={attachments}
               profiles={profiles}
               theme={theme}
-              onReply={async (body, isDecision) => {
+              onReply={async (body, isDecision, files) => {
                 if (!selectedPost || !session.user) return;
-                await createComment(selectedPost, session.user.id, body, isDecision);
+                await createComment(selectedPost, session.user.id, body, isDecision, files);
                 await loadWorkspaceData(workspaceId, true);
                 await loadComments(selectedPost.id);
               }}
@@ -700,6 +740,10 @@ export default function App() {
             if (!session.user) return;
             await updateProfile(session.user.id, input);
             await loadWorkspaceData(workspaceId, true);
+          }}
+          onUploadAvatar={async (file) => {
+            if (!session.user) throw new Error('Sign in before uploading a photo.');
+            return uploadAvatar(session.user.id, file);
           }}
         />
       )}
@@ -965,6 +1009,7 @@ function ThreadPanel({
   post,
   profile,
   comments,
+  attachments,
   profiles,
   theme,
   onReply,
@@ -972,18 +1017,29 @@ function ThreadPanel({
   post?: AppPost;
   profile?: AppProfile;
   comments: AppComment[];
+  attachments: AppAttachment[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
-  onReply: (body: string, isDecision: boolean) => Promise<void>;
+  onReply: (body: string, isDecision: boolean, files: File[]) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [isDecision, setIsDecision] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [dragActive, setDragActive] = useState(false);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [post?.id, comments.length]);
+  }, [post?.id, comments.length, attachments.length]);
+
+  const addFiles = (incoming: FileList | File[]) => {
+    const accepted = Array.from(incoming).filter((file) => file.size <= 100 * 1024 * 1024);
+    setFiles((current) => [...current, ...accepted].slice(0, 10));
+    if (accepted.length !== Array.from(incoming).length) setError('Each attachment must be 100 MB or smaller.');
+  };
 
   if (!post) {
     return (
@@ -1015,6 +1071,7 @@ function ThreadPanel({
                 timestamp={comment.created_at}
                 theme={theme}
                 isDecision={comment.is_decision}
+                attachments={attachments.filter((attachment) => attachment.comment_id === comment.id)}
               />
             </div>
           ))}
@@ -1023,29 +1080,78 @@ function ThreadPanel({
       </div>
 
       <form
-        className={cn('shrink-0 border-t p-4', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}
+        className={cn('shrink-0 border-t p-4', dragActive && 'ring-2 ring-inset ring-[#E9B93E]', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}
+        onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
+        onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+        onDragLeave={(event) => { event.preventDefault(); if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          addFiles(event.dataTransfer.files);
+        }}
         onSubmit={async (event) => {
           event.preventDefault();
-          if (!reply.trim()) return;
+          if (!reply.trim() && files.length === 0) return;
           setSubmitting(true);
-          await onReply(reply.trim(), isDecision);
-          setReply('');
-          setIsDecision(false);
-          setSubmitting(false);
+          setError('');
+          try {
+            await onReply(reply.trim(), isDecision, files);
+            setReply('');
+            setFiles([]);
+            setIsDecision(false);
+          } catch (caughtError) {
+            setError(getErrorMessage(caughtError));
+          } finally {
+            setSubmitting(false);
+          }
         }}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            if (event.target.files) addFiles(event.target.files);
+            event.target.value = '';
+          }}
+        />
         <textarea
           value={reply}
           onChange={(event) => setReply(event.target.value)}
           placeholder="Reply to this post"
           className={cn('h-24 w-full resize-none rounded-lg border bg-transparent p-3 text-sm leading-6 outline-none', subtleButton(theme))}
         />
+        {files.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {files.map((file, index) => (
+              <span key={`${file.name}-${index}`} className={cn('inline-flex max-w-full items-center gap-2 rounded-lg border px-2 py-1 text-xs', subtleButton(theme))}>
+                <FileIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{file.name}</span>
+                <button type="button" aria-label={`Remove ${file.name}`} title="Remove attachment" onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {dragActive && <p className="mt-2 text-center text-sm font-semibold text-[#8F4F2E]">Drop files to attach</p>}
+        {error && <p className="mt-2 text-sm font-semibold text-[#B91C1C]">{error}</p>}
         <div className="mt-3 flex items-center gap-3">
+          <button
+            type="button"
+            aria-label="Add attachments"
+            title="Add images, videos, or files"
+            onClick={() => fileInputRef.current?.click()}
+            className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
           <label className={cn('flex items-center gap-2 text-sm', muted(theme))}>
             <input type="checkbox" checked={isDecision} onChange={(event) => setIsDecision(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
             Decision
           </label>
-          <button disabled={submitting || !reply.trim()} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          <button disabled={submitting || (!reply.trim() && files.length === 0)} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Reply
           </button>
@@ -1055,7 +1161,7 @@ function ThreadPanel({
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, isDecision }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; isDecision?: boolean }) {
+function ThreadCard({ profile, body, timestamp, theme, isDecision, attachments = [] }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; isDecision?: boolean; attachments?: AppAttachment[] }) {
   return (
     <div className={cn('rounded-lg border p-4', surface(theme))}>
       <div className="mb-3 flex items-center gap-3">
@@ -1066,8 +1172,35 @@ function ThreadCard({ profile, body, timestamp, theme, isDecision }: { profile?:
         </div>
         {isDecision && <CheckCircle2 className="ml-auto h-4 w-4 text-[#0F766E]" />}
       </div>
-      <p className={cn('whitespace-pre-wrap text-sm leading-6', muted(theme))}>{body}</p>
+      {body && <p className={cn('whitespace-pre-wrap text-sm leading-6', muted(theme))}>{body}</p>}
+      {attachments.length > 0 && (
+        <div className={cn('grid gap-2', body && 'mt-3')}>
+          {attachments.map((attachment) => (
+            <div key={attachment.id}>
+              <AttachmentPreview attachment={attachment} theme={theme} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function AttachmentPreview({ attachment, theme }: { attachment: AppAttachment; theme: 'light' | 'dark' }) {
+  if (!attachment.signed_url) return null;
+  if (attachment.mime_type.startsWith('image/')) {
+    return <a href={attachment.signed_url} target="_blank" rel="noreferrer"><img src={attachment.signed_url} alt={attachment.filename} className="max-h-64 w-full rounded-lg border object-contain" /></a>;
+  }
+  if (attachment.mime_type.startsWith('video/')) {
+    return <video src={attachment.signed_url} controls preload="metadata" className="max-h-64 w-full rounded-lg border" />;
+  }
+  return (
+    <a href={attachment.signed_url} target="_blank" rel="noreferrer" className={cn('flex items-center gap-3 rounded-lg border p-3 text-sm', subtleButton(theme))}>
+      <FileIcon className="h-5 w-5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate font-semibold">{attachment.filename}</span>
+      <span className={cn('shrink-0 text-xs', muted(theme))}>{formatFileSize(attachment.byte_size)}</span>
+      <Download className="h-4 w-4 shrink-0" />
+    </a>
   );
 }
 
@@ -1573,6 +1706,7 @@ function SettingsModal({
   onClose,
   onSignOut,
   onSaveProfile,
+  onUploadAvatar,
 }: {
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
@@ -1583,6 +1717,7 @@ function SettingsModal({
   onClose: () => void;
   onSignOut: () => void;
   onSaveProfile: (input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string }) => Promise<void>;
+  onUploadAvatar: (file: File) => Promise<string>;
 }) {
   const [displayName, setDisplayName] = useState(profile?.display_name ?? email.split('@')[0] ?? '');
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url ?? '');
@@ -1593,6 +1728,8 @@ function SettingsModal({
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
     <ModalShell theme={theme} title="Settings" onClose={onClose}>
@@ -1650,6 +1787,38 @@ function SettingsModal({
               <span className="inline-flex items-center gap-2"><Camera className="h-4 w-4" /> Photo URL</span>
               <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
             </label>
+            <div className="grid gap-2 text-sm font-semibold">
+              <span>Or upload a photo</span>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (!file) return;
+                  setUploadingAvatar(true);
+                  setError('');
+                  try {
+                    setAvatarUrl(await onUploadAvatar(file));
+                  } catch (caughtError) {
+                    setError(getErrorMessage(caughtError));
+                  } finally {
+                    setUploadingAvatar(false);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                disabled={uploadingAvatar}
+                onClick={() => avatarInputRef.current?.click()}
+                className={cn('inline-flex h-11 items-center justify-center gap-2 rounded-lg border px-4', subtleButton(theme))}
+              >
+                {uploadingAvatar ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+                {uploadingAvatar ? 'Uploading...' : 'Choose image'}
+              </button>
+            </div>
             <label className="grid gap-2 text-sm font-semibold">
               Time zone
               <input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
@@ -2093,7 +2262,7 @@ async function createPost(workspaceId: string, spaceId: string, userId: string, 
 
 async function updatePost(postId: string, input: { title: string; body: string; spaceId: string }) {
   if (!supabase) return;
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('posts')
     .update({
       title: input.title,
@@ -2101,37 +2270,94 @@ async function updatePost(postId: string, input: { title: string; body: string; 
       space_id: input.spaceId,
       last_activity_at: new Date().toISOString(),
     })
-    .eq('id', postId);
+    .eq('id', postId)
+    .select('id')
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('The post was not updated. Your account may not have permission to edit it.');
 }
 
 async function deletePost(postId: string) {
   if (!supabase) return;
-  const { error } = await supabase.from('posts').delete().eq('id', postId);
-  if (!error) return;
-
-  const { error: archiveError } = await supabase
-    .from('posts')
-    .update({
-      state: 'archived',
-      archived_at: new Date().toISOString(),
-      last_activity_at: new Date().toISOString(),
-    })
-    .eq('id', postId);
-
-  if (archiveError) throw error;
+  const { data: attachmentRows } = await supabase
+    .from('attachments')
+    .select('bucket, object_path')
+    .eq('post_id', postId);
+  const { data, error } = await supabase.from('posts').delete().eq('id', postId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('The post was not deleted. Apply the latest Supabase migration and confirm your account is the author, Chief, or admin.');
+  const pathsByBucket = new Map<string, string[]>();
+  (attachmentRows ?? []).forEach((attachment) => {
+    pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]);
+  });
+  await Promise.all([...pathsByBucket].map(([bucket, paths]) => supabase.storage.from(bucket).remove(paths)));
 }
 
-async function createComment(post: AppPost, userId: string, body: string, isDecision: boolean) {
+async function createComment(post: AppPost, userId: string, body: string, isDecision: boolean, files: File[]) {
   if (!supabase) return;
-  const { error } = await supabase.from('comments').insert({
+  const { data: comment, error } = await supabase
+    .from('comments')
+    .insert({
+      workspace_id: post.workspace_id,
+      post_id: post.id,
+      author_id: userId,
+      body,
+      is_decision: isDecision,
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  for (const file of files) {
+    await uploadCommentAttachment(post, comment.id, userId, file);
+  }
+}
+
+async function uploadCommentAttachment(post: AppPost, commentId: string, userId: string, file: File) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  if (file.size > 100 * 1024 * 1024) throw new Error(`${file.name} is larger than 100 MB.`);
+
+  const safeName = sanitizeFilename(file.name);
+  const objectPath = `${post.workspace_id}/${userId}/${commentId}/${crypto.randomUUID()}-${safeName}`;
+  const { error: uploadError } = await supabase.storage.from('workspace-files').upload(objectPath, file, {
+    contentType: file.type || 'application/octet-stream',
+    upsert: false,
+  });
+  if (uploadError) throw uploadError;
+
+  const { error: attachmentError } = await supabase.from('attachments').insert({
     workspace_id: post.workspace_id,
     post_id: post.id,
-    author_id: userId,
-    body,
-    is_decision: isDecision,
+    comment_id: commentId,
+    uploaded_by: userId,
+    bucket: 'workspace-files',
+    object_path: objectPath,
+    filename: file.name,
+    mime_type: file.type || 'application/octet-stream',
+    byte_size: file.size,
+  });
+
+  if (attachmentError) {
+    await supabase.storage.from('workspace-files').remove([objectPath]);
+    throw attachmentError;
+  }
+}
+
+async function uploadAvatar(userId: string, file: File) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  if (!file.type.startsWith('image/')) throw new Error('Choose an image file for your profile photo.');
+  if (file.size > 10 * 1024 * 1024) throw new Error('Profile photos must be 10 MB or smaller.');
+
+  const extension = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+  const objectPath = `${userId}/avatar.${extension}`;
+  const { error } = await supabase.storage.from('avatars').upload(objectPath, file, {
+    contentType: file.type,
+    cacheControl: '3600',
+    upsert: true,
   });
   if (error) throw error;
+
+  const { data } = supabase.storage.from('avatars').getPublicUrl(objectPath);
+  return `${data.publicUrl}?v=${Date.now()}`;
 }
 
 async function createTask(
@@ -2157,7 +2383,7 @@ async function updateTask(
   input: { title: string; description: string; assigneeId: string; dueAt: string },
 ) {
   if (!supabase) return;
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('tasks')
     .update({
       title: input.title,
@@ -2165,27 +2391,25 @@ async function updateTask(
       assignee_id: input.assigneeId || null,
       due_at: input.dueAt || null,
     })
-    .eq('id', taskId);
+    .eq('id', taskId)
+    .select('id')
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('The task was not updated. Your account may not have permission to edit it.');
 }
 
 async function updateTaskStatus(taskId: string, status: TaskStatus) {
   if (!supabase) return;
-  const { error } = await supabase.from('tasks').update({ status }).eq('id', taskId);
+  const { data, error } = await supabase.from('tasks').update({ status }).eq('id', taskId).select('id').maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('The task status was not updated. Your account may not have permission to edit it.');
 }
 
 async function deleteTask(taskId: string) {
   if (!supabase) return;
-  const { error } = await supabase.from('tasks').delete().eq('id', taskId);
-  if (!error) return;
-
-  const { error: cancelError } = await supabase
-    .from('tasks')
-    .update({ status: 'canceled' })
-    .eq('id', taskId);
-
-  if (cancelError) throw error;
+  const { data, error } = await supabase.from('tasks').delete().eq('id', taskId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('The task was not deleted. Apply the latest Supabase migration and confirm your account is the creator, assignee, Chief, or admin.');
 }
 
 async function updateProfile(
@@ -2193,15 +2417,18 @@ async function updateProfile(
   input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string },
 ) {
   if (!supabase) return;
-  const { error: basicError } = await supabase
+  const { data, error: basicError } = await supabase
     .from('users')
     .update({
       display_name: input.displayName,
       avatar_url: input.avatarUrl || null,
       timezone: input.timezone || null,
     })
-    .eq('id', userId);
+    .eq('id', userId)
+    .select('id')
+    .maybeSingle();
   if (basicError) throw basicError;
+  if (!data) throw new Error('Your profile was not updated. Please sign in again and retry.');
 
   const { error: detailsError } = await supabase
     .from('users')
@@ -2252,6 +2479,17 @@ function slugify(value: string) {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
+}
+
+function sanitizeFilename(filename: string) {
+  const cleaned = filename.normalize('NFKD').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return cleaned || 'attachment';
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function getErrorMessage(error: unknown) {
