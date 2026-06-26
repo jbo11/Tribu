@@ -1,6 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Archive,
   Camera,
   CheckCircle2,
   ClipboardList,
@@ -14,6 +13,7 @@ import {
   Menu,
   MessageSquare,
   Moon,
+  Pencil,
   Phone,
   Plus,
   Search,
@@ -21,6 +21,7 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  Trash2,
   User,
   UserPlus,
   X,
@@ -86,6 +87,8 @@ export default function App() {
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editingPost, setEditingPost] = useState<AppPost | null>(null);
+  const [editingTask, setEditingTask] = useState<AppTask | null>(null);
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
 
@@ -120,9 +123,9 @@ export default function App() {
     });
   }, [posts, query, sort]);
 
-  const loadWorkspaceData = useCallback(async (targetWorkspaceId: string) => {
+  const loadWorkspaceData = useCallback(async (targetWorkspaceId: string, silent = false) => {
     if (!supabase || !targetWorkspaceId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setNotice('');
 
     const [spaceResult, postResult, taskResult, membershipResult, decisionResult] = await Promise.all([
@@ -187,7 +190,7 @@ export default function App() {
       setProfiles({});
     }
 
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
   const loadMemberships = useCallback(async (userId: string, preferredWorkspaceId?: string) => {
@@ -339,18 +342,18 @@ export default function App() {
     const channel = supabase
       .channel(`workspace-${workspaceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        void loadWorkspaceData(workspaceId);
+        void loadWorkspaceData(workspaceId, true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        void loadWorkspaceData(workspaceId);
+        void loadWorkspaceData(workspaceId, true);
         if (selectedPost?.id) void loadComments(selectedPost.id);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        void loadWorkspaceData(workspaceId);
+        void loadWorkspaceData(workspaceId, true);
       })
       .subscribe((status, error) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setNotice(error?.message ?? 'Live updates could not connect. Tribu will keep checking for updates automatically.');
+          setNotice(error?.message ?? 'Live updates could not connect. Refresh the page to see new activity while Supabase Realtime is unavailable.');
         }
       });
 
@@ -360,29 +363,11 @@ export default function App() {
   }, [loadComments, loadWorkspaceData, selectedPost?.id, workspaceId]);
 
   useEffect(() => {
-    if (!workspaceId) return;
-    const intervalId = window.setInterval(() => {
-      void loadWorkspaceData(workspaceId);
-    }, 15000);
-
-    return () => window.clearInterval(intervalId);
-  }, [loadWorkspaceData, workspaceId]);
-
-  useEffect(() => {
     if (!selectedPost?.id) {
       setComments([]);
       return;
     }
     void loadComments(selectedPost.id);
-  }, [loadComments, selectedPost?.id]);
-
-  useEffect(() => {
-    if (!selectedPost?.id) return;
-    const intervalId = window.setInterval(() => {
-      void loadComments(selectedPost.id);
-    }, 5000);
-
-    return () => window.clearInterval(intervalId);
   }, [loadComments, selectedPost?.id]);
 
   useEffect(() => {
@@ -537,6 +522,14 @@ export default function App() {
                               theme={theme}
                               space={spaces.find((item) => item.id === post.space_id)}
                               onClick={() => setSelectedPostId(post.id)}
+                              canManage={post.author_id === session.user.id || canManageAdmin}
+                              onEdit={() => setEditingPost(post)}
+                              onDelete={async () => {
+                                if (!window.confirm('Delete this post and its discussion?')) return;
+                                await deletePost(post.id);
+                                if (selectedPostId === post.id) setSelectedPostId('');
+                                await loadWorkspaceData(workspaceId, true);
+                              }}
                             />
                           </div>
                         ))}
@@ -561,9 +554,15 @@ export default function App() {
                   profiles={profiles}
                   theme={theme}
                   onCreateTask={() => setTaskModalOpen(true)}
+                  onEditTask={(task) => setEditingTask(task)}
+                  onDeleteTask={async (task) => {
+                    if (!window.confirm('Delete this task?')) return;
+                    await deleteTask(task.id);
+                    await loadWorkspaceData(workspaceId, true);
+                  }}
                   onStatusChange={async (taskId, status) => {
                     await updateTaskStatus(taskId, status);
-                    await loadWorkspaceData(workspaceId);
+                    await loadWorkspaceData(workspaceId, true);
                   }}
                 />
               )}
@@ -576,6 +575,14 @@ export default function App() {
                   onOpenPost={(postId) => {
                     setSelectedPostId(postId);
                     setView('feed');
+                  }}
+                  canManagePost={(post) => post.author_id === session.user.id || canManageAdmin}
+                  onEditPost={(post) => setEditingPost(post)}
+                  onDeletePost={async (post) => {
+                    if (!window.confirm('Delete this knowledge entry and its discussion?')) return;
+                    await deletePost(post.id);
+                    if (selectedPostId === post.id) setSelectedPostId('');
+                    await loadWorkspaceData(workspaceId, true);
                   }}
                 />
               )}
@@ -594,10 +601,20 @@ export default function App() {
               comments={comments}
               profiles={profiles}
               theme={theme}
+              canManagePost={Boolean(selectedPost && (selectedPost.author_id === session.user.id || canManageAdmin))}
+              onEditPost={() => {
+                if (selectedPost) setEditingPost(selectedPost);
+              }}
+              onDeletePost={async () => {
+                if (!selectedPost || !window.confirm('Delete this post and its discussion?')) return;
+                await deletePost(selectedPost.id);
+                setSelectedPostId('');
+                await loadWorkspaceData(workspaceId, true);
+              }}
               onReply={async (body, isDecision) => {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, isDecision);
-                await loadWorkspaceData(workspaceId);
+                await loadWorkspaceData(workspaceId, true);
                 await loadComments(selectedPost.id);
               }}
             />
@@ -615,7 +632,23 @@ export default function App() {
             if (!session.user) return;
             await createPost(workspaceId, spaceId, session.user.id, title, body);
             setComposerOpen(false);
-            await loadWorkspaceData(workspaceId);
+            await loadWorkspaceData(workspaceId, true);
+          }}
+        />
+      )}
+
+      {editingPost && (
+        <PostComposer
+          theme={theme}
+          spaces={spaces}
+          defaultSpaceId={editingPost.space_id}
+          initialPost={editingPost}
+          onClose={() => setEditingPost(null)}
+          onCreate={async ({ title, body, spaceId }) => {
+            await updatePost(editingPost.id, { title, body, spaceId });
+            setEditingPost(null);
+            await loadWorkspaceData(workspaceId, true);
+            await loadComments(editingPost.id);
           }}
         />
       )}
@@ -628,7 +661,7 @@ export default function App() {
             if (!session.user) return;
             const space = await createSpace(workspaceId, session.user.id, name, access);
             setSpaceModalOpen(false);
-            await loadWorkspaceData(workspaceId);
+            await loadWorkspaceData(workspaceId, true);
             setActiveSpaceId(space.id);
           }}
         />
@@ -643,7 +676,21 @@ export default function App() {
             if (!session.user) return;
             await createTask(workspaceId, session.user.id, { title, description, assigneeId, dueAt });
             setTaskModalOpen(false);
-            await loadWorkspaceData(workspaceId);
+            await loadWorkspaceData(workspaceId, true);
+          }}
+        />
+      )}
+
+      {editingTask && (
+        <TaskModal
+          theme={theme}
+          profiles={memberProfiles}
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onCreate={async ({ title, description, assigneeId, dueAt }) => {
+            await updateTask(editingTask.id, { title, description, assigneeId, dueAt });
+            setEditingTask(null);
+            await loadWorkspaceData(workspaceId, true);
           }}
         />
       )}
@@ -661,7 +708,7 @@ export default function App() {
           onSaveProfile={async (input) => {
             if (!session.user) return;
             await updateProfile(session.user.id, input);
-            await loadWorkspaceData(workspaceId);
+            await loadWorkspaceData(workspaceId, true);
           }}
         />
       )}
@@ -854,6 +901,9 @@ function PostRow({
   theme,
   space,
   onClick,
+  canManage,
+  onEdit,
+  onDelete,
 }: {
   post: AppPost;
   selected: boolean;
@@ -861,10 +911,18 @@ function PostRow({
   theme: 'light' | 'dark';
   space?: AppSpace;
   onClick: () => void;
+  canManage: boolean;
+  onEdit: () => void;
+  onDelete: () => Promise<void>;
 }) {
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') onClick();
+      }}
       className={cn('w-full rounded-lg border p-4 text-left transition', selected ? 'border-[#E9B93E] shadow-lg shadow-[#8F4F2E]/15' : surface(theme))}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -874,11 +932,39 @@ function PostRow({
       </div>
       <h2 className="mt-3 text-lg font-bold tracking-tight">{post.title}</h2>
       <p className={cn('mt-2 line-clamp-2 text-sm leading-6', muted(theme))}>{post.body}</p>
-      <div className="mt-4 flex items-center gap-3">
-        <Avatar profile={profile} />
-        <span className="text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar profile={profile} />
+          <span className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
+        </div>
+        {canManage && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit();
+              }}
+              className={cn('inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                void onDelete();
+              }}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-xs font-semibold text-[#B91C1C]"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </button>
+          </div>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -888,6 +974,9 @@ function ThreadPanel({
   comments,
   profiles,
   theme,
+  canManagePost,
+  onEditPost,
+  onDeletePost,
   onReply,
 }: {
   post?: AppPost;
@@ -895,6 +984,9 @@ function ThreadPanel({
   comments: AppComment[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
+  canManagePost: boolean;
+  onEditPost: () => void;
+  onDeletePost: () => Promise<void>;
   onReply: (body: string, isDecision: boolean) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
@@ -917,9 +1009,16 @@ function ThreadPanel({
             <StatusPill state={post.state} />
             <h2 className="mt-3 text-xl font-bold tracking-tight">{post.title}</h2>
           </div>
-          <button aria-label="Archive post" className={cn('rounded-lg border p-2', subtleButton(theme))}>
-            <Archive className="h-4 w-4" />
-          </button>
+          {canManagePost && (
+            <div className="flex shrink-0 items-center gap-2">
+              <button type="button" aria-label="Edit post" onClick={onEditPost} className={cn('rounded-lg border p-2', subtleButton(theme))}>
+                <Pencil className="h-4 w-4" />
+              </button>
+              <button type="button" aria-label="Delete post" onClick={() => void onDeletePost()} className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] p-2 text-[#B91C1C]">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -994,12 +1093,16 @@ function TasksView({
   profiles,
   theme,
   onCreateTask,
+  onEditTask,
+  onDeleteTask,
   onStatusChange,
 }: {
   tasks: AppTask[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
   onCreateTask: () => void;
+  onEditTask: (task: AppTask) => void;
+  onDeleteTask: (task: AppTask) => Promise<void>;
   onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>;
 }) {
   if (tasks.length === 0) {
@@ -1016,7 +1119,7 @@ function TasksView({
       </div>
       <div className="grid gap-3 overflow-y-auto pr-1 scroll-area">
         {tasks.map((task) => (
-          <div key={task.id} className={cn('grid gap-3 rounded-lg border p-4 md:grid-cols-[1fr_180px_160px]', surface(theme))}>
+          <div key={task.id} className={cn('grid gap-3 rounded-lg border p-4 xl:grid-cols-[1fr_180px_160px_auto]', surface(theme))}>
             <div className="min-w-0">
               <p className="font-semibold">{task.title}</p>
               {task.description && <p className={cn('mt-1 line-clamp-2 text-sm leading-6', muted(theme))}>{task.description}</p>}
@@ -1037,6 +1140,16 @@ function TasksView({
               <option value="done">Done</option>
               <option value="canceled">Canceled</option>
             </select>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => onEditTask(task)} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}>
+                <Pencil className="h-3.5 w-3.5" />
+                Edit
+              </button>
+              <button type="button" onClick={() => void onDeleteTask(task)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-xs font-semibold text-[#B91C1C]">
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -1050,12 +1163,18 @@ function KnowledgeView({
   profiles,
   theme,
   onOpenPost,
+  canManagePost,
+  onEditPost,
+  onDeletePost,
 }: {
   posts: AppPost[];
   spaces: AppSpace[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
   onOpenPost: (postId: string) => void;
+  canManagePost: (post: AppPost) => boolean;
+  onEditPost: (post: AppPost) => void;
+  onDeletePost: (post: AppPost) => Promise<void>;
 }) {
   const knowledgePosts = posts
     .filter((post) => post.has_decision || post.state === 'read_only' || post.state === 'locked')
@@ -1075,8 +1194,18 @@ function KnowledgeView({
         {knowledgePosts.map((post) => {
           const space = spaces.find((item) => item.id === post.space_id);
           const profile = profiles[post.author_id];
+          const canManage = canManagePost(post);
           return (
-            <button key={post.id} onClick={() => onOpenPost(post.id)} className={cn('w-full rounded-lg border p-4 text-left transition hover:border-[#E9B93E]', surface(theme))}>
+            <div
+              key={post.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenPost(post.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') onOpenPost(post.id);
+              }}
+              className={cn('w-full rounded-lg border p-4 text-left transition hover:border-[#E9B93E]', surface(theme))}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 {post.has_decision && <span className="rounded-full bg-[#D1FAE5] px-2.5 py-1 text-xs font-semibold text-[#065F46]">Decision</span>}
                 {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#DFC9A4]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
@@ -1087,8 +1216,34 @@ function KnowledgeView({
               <div className="mt-4 flex items-center gap-3">
                 <Avatar profile={profile} />
                 <span className="text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
+                {canManage && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEditPost(post);
+                      }}
+                      className={cn('inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold', subtleButton(theme))}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onDeletePost(post);
+                      }}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-3 text-xs font-semibold text-[#B91C1C]"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -1229,22 +1384,24 @@ function PostComposer({
   theme,
   spaces,
   defaultSpaceId,
+  initialPost,
   onClose,
   onCreate,
 }: {
   theme: 'light' | 'dark';
   spaces: AppSpace[];
   defaultSpaceId: string;
+  initialPost?: AppPost;
   onClose: () => void;
   onCreate: (input: { title: string; body: string; spaceId: string }) => Promise<void>;
 }) {
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  const [title, setTitle] = useState(initialPost?.title ?? '');
+  const [body, setBody] = useState(initialPost?.body ?? '');
   const [spaceId, setSpaceId] = useState(defaultSpaceId);
   const [submitting, setSubmitting] = useState(false);
 
   return (
-    <ModalShell theme={theme} title="New post" onClose={onClose}>
+    <ModalShell theme={theme} title={initialPost ? 'Edit post' : 'New post'} onClose={onClose}>
       <form
         className="grid gap-4"
         onSubmit={async (event) => {
@@ -1275,7 +1432,7 @@ function PostComposer({
         </label>
         <button disabled={submitting || !title.trim() || !body.trim() || !spaceId} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          Publish
+          {initialPost ? 'Save post' : 'Publish'}
         </button>
       </form>
     </ModalShell>
@@ -1339,23 +1496,25 @@ function SpaceModal({
 function TaskModal({
   theme,
   profiles,
+  task,
   onClose,
   onCreate,
 }: {
   theme: 'light' | 'dark';
   profiles: AppProfile[];
+  task?: AppTask;
   onClose: () => void;
   onCreate: (input: { title: string; description: string; assigneeId: string; dueAt: string }) => Promise<void>;
 }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [assigneeId, setAssigneeId] = useState('');
-  const [dueAt, setDueAt] = useState('');
+  const [title, setTitle] = useState(task?.title ?? '');
+  const [description, setDescription] = useState(task?.description ?? '');
+  const [assigneeId, setAssigneeId] = useState(task?.assignee_id ?? '');
+  const [dueAt, setDueAt] = useState(task?.due_at ? task.due_at.slice(0, 10) : '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   return (
-    <ModalShell theme={theme} title="New task" onClose={onClose}>
+    <ModalShell theme={theme} title={task ? 'Edit task' : 'New task'} onClose={onClose}>
       <form
         className="grid gap-4"
         onSubmit={async (event) => {
@@ -1399,7 +1558,7 @@ function TaskModal({
         </div>
         <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          Create task
+          {task ? 'Save task' : 'Create task'}
         </button>
         {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
       </form>
@@ -1920,6 +2079,26 @@ async function createPost(workspaceId: string, spaceId: string, userId: string, 
   if (error) throw error;
 }
 
+async function updatePost(postId: string, input: { title: string; body: string; spaceId: string }) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('posts')
+    .update({
+      title: input.title,
+      body: input.body,
+      space_id: input.spaceId,
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq('id', postId);
+  if (error) throw error;
+}
+
+async function deletePost(postId: string) {
+  if (!supabase) return;
+  const { error } = await supabase.from('posts').delete().eq('id', postId);
+  if (error) throw error;
+}
+
 async function createComment(post: AppPost, userId: string, body: string, isDecision: boolean) {
   if (!supabase) return;
   const { error } = await supabase.from('comments').insert({
@@ -1950,9 +2129,32 @@ async function createTask(
   if (error) throw error;
 }
 
+async function updateTask(
+  taskId: string,
+  input: { title: string; description: string; assigneeId: string; dueAt: string },
+) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('tasks')
+    .update({
+      title: input.title,
+      description: input.description || null,
+      assignee_id: input.assigneeId || null,
+      due_at: input.dueAt || null,
+    })
+    .eq('id', taskId);
+  if (error) throw error;
+}
+
 async function updateTaskStatus(taskId: string, status: TaskStatus) {
   if (!supabase) return;
   const { error } = await supabase.from('tasks').update({ status }).eq('id', taskId);
+  if (error) throw error;
+}
+
+async function deleteTask(taskId: string) {
+  if (!supabase) return;
+  const { error } = await supabase.from('tasks').delete().eq('id', taskId);
   if (error) throw error;
 }
 
