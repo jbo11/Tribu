@@ -2,6 +2,7 @@ import { lazy, Suspense, type CSSProperties, type ReactNode, useCallback, useEff
 import {
   Archive,
   ArchiveRestore,
+  Bug,
   Camera,
   CalendarDays,
   ChevronDown,
@@ -18,6 +19,7 @@ import {
   Headphones,
   Image as ImageIcon,
   Inbox,
+  Info,
   LayoutGrid,
   List,
   Loader2,
@@ -28,6 +30,7 @@ import {
   Moon,
   PanelRightClose,
   PanelRightOpen,
+  Palette,
   Pencil,
   Phone,
   Plus,
@@ -99,6 +102,8 @@ const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
 const PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone, phone, address, bio';
 const linkPreviewCache = new Map<string, AppLinkPreview>();
 const THREAD_WIDTH_STORAGE_KEY = 'tribu_thread_width';
+const THEME_STORAGE_KEY = 'tribu_theme';
+const CHAT_OPEN_STORAGE_KEY = 'tribu_chat_open';
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
 
 interface ForwardableMessage {
@@ -106,8 +111,10 @@ interface ForwardableMessage {
   attachments: AppAttachment[];
 }
 
+type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'about';
+
 export default function App() {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [view, setView] = useState<ViewMode>('feed');
@@ -132,7 +139,7 @@ export default function App() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountModal, setAccountModal] = useState<AccountModalView | null>(null);
   const [editingPost, setEditingPost] = useState<AppPost | null>(null);
   const [editingTask, setEditingTask] = useState<AppTask | null>(null);
   const [knowledgeModalOpen, setKnowledgeModalOpen] = useState(false);
@@ -140,7 +147,7 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
   const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(getInitialChatOpen);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
@@ -152,6 +159,14 @@ export default function App() {
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => a.display_name.localeCompare(b.display_name)),
     [profiles],
   );
+
+  useEffect(() => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOpen));
+  }, [chatOpen]);
 
   const visiblePosts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -548,9 +563,12 @@ export default function App() {
           workspaces={workspaces}
           workspaceId={workspaceId}
           sidebarOpen={sidebarOpen}
+          profile={currentProfile}
+          email={session.user.email ?? ''}
+          plan={selectedWorkspace?.plan ?? 'free'}
           onClose={() => setSidebarOpen(false)}
           onCreateSpace={() => setSpaceModalOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenAccount={setAccountModal}
           onSignOut={() => void supabase?.auth.signOut()}
           canManageAdmin={canManageAdmin}
         />
@@ -903,16 +921,18 @@ export default function App() {
         />
       )}
 
-      {settingsOpen && (
+      {accountModal && (
         <SettingsModal
+          section={accountModal}
           theme={theme}
           setTheme={setTheme}
+          chatOpen={chatOpen}
+          setChatOpen={setChatOpen}
           profile={currentProfile}
           email={session.user.email ?? ''}
           workspace={selectedWorkspace}
           role={currentRole}
-          onClose={() => setSettingsOpen(false)}
-          onSignOut={() => void supabase?.auth.signOut()}
+          onClose={() => setAccountModal(null)}
           onSaveProfile={async (input) => {
             if (!session.user) return;
             await updateProfile(session.user.id, input);
@@ -956,9 +976,12 @@ function Sidebar({
   workspaces,
   workspaceId,
   sidebarOpen,
+  profile,
+  email,
+  plan,
   onClose,
   onCreateSpace,
-  onOpenSettings,
+  onOpenAccount,
   onSignOut,
   canManageAdmin,
 }: {
@@ -971,22 +994,48 @@ function Sidebar({
   workspaces: AppWorkspace[];
   workspaceId: string;
   sidebarOpen: boolean;
+  profile?: AppProfile;
+  email: string;
+  plan: string;
   onClose: () => void;
   onCreateSpace: () => void;
-  onOpenSettings: () => void;
+  onOpenAccount: (view: AccountModalView) => void;
   onSignOut: () => void;
   canManageAdmin: boolean;
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || currentRole === 'admin';
   const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'camp';
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountName = profile?.display_name || email.split('@')[0] || 'Camp member';
+  const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+        setHelpMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', closeMenu);
+    return () => document.removeEventListener('pointerdown', closeMenu);
+  }, [accountMenuOpen]);
+
+  const openAccountView = (nextView: AccountModalView) => {
+    setAccountMenuOpen(false);
+    setHelpMenuOpen(false);
+    onOpenAccount(nextView);
+  };
 
   return (
     <>
       <div className={cn('fixed inset-0 z-40 bg-black/30 lg:hidden', sidebarOpen ? 'block' : 'hidden')} onClick={onClose} />
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex h-dvh w-[280px] flex-col overflow-hidden border-r px-4 py-5 transition-transform lg:static lg:z-auto lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex h-dvh w-[280px] flex-col overflow-visible border-r px-4 py-5 transition-transform lg:static lg:z-auto lg:translate-x-0',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full',
           theme === 'dark' ? 'border-white/10 bg-[#201815]/95' : 'border-[#DFC9A4] bg-[#332722]',
         )}
@@ -1045,12 +1094,62 @@ function Sidebar({
           </div>
         </section>
 
-        <div className="mt-auto flex justify-center gap-2 pt-4">
-          <button aria-label="Settings" title="Settings" onClick={onOpenSettings} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-[#FFF7E8]">
-            <Settings className="h-4 w-4" />
-          </button>
-          <button aria-label="Sign out" title="Sign out" onClick={onSignOut} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-[#FFF7E8]">
-            <LogOut className="h-4 w-4" />
+        <div ref={accountMenuRef} className="relative mt-auto pt-4">
+          {accountMenuOpen && (
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[70] rounded-lg border border-white/10 bg-[#2A2421] p-2 text-[#FFF7E8] shadow-2xl">
+              <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
+                <Avatar profile={profile} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold">{accountName}</p>
+                  <p className="text-xs text-[#BFB3A4]">{planLabel}</p>
+                </div>
+              </div>
+              <div className="mt-2 grid gap-1">
+                <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
+                <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                <AccountMenuButton icon={Settings} label="Settings" onClick={() => openAccountView('settings')} />
+                <div className="relative">
+                  <AccountMenuButton icon={CircleHelp} label="Help" trailing={ChevronRight} active={helpMenuOpen} onClick={() => setHelpMenuOpen((open) => !open)} />
+                  {helpMenuOpen && (
+                    <>
+                      <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
+                        <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
+                        <AccountMenuButton icon={Info} label="About Tribu" onClick={() => openAccountView('about')} />
+                        <a href="https://github.com/jbo11/Tribu/issues/new" target="_blank" rel="noreferrer" className="flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition hover:bg-white/10">
+                          <Bug className="h-4 w-4" /> Report a problem
+                        </a>
+                      </div>
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#2A2421] p-2 shadow-2xl lg:grid">
+                        <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
+                        <AccountMenuButton icon={Info} label="About Tribu" onClick={() => openAccountView('about')} />
+                        <a href="https://github.com/jbo11/Tribu/issues/new" target="_blank" rel="noreferrer" className="flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition hover:bg-white/10">
+                          <Bug className="h-4 w-4" /> Report a problem
+                        </a>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="my-1 border-t border-white/10" />
+                <AccountMenuButton icon={LogOut} label="Log out" onClick={onSignOut} />
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
+            aria-label="Open account menu"
+            aria-expanded={accountMenuOpen}
+            onClick={() => {
+              setAccountMenuOpen((open) => !open);
+              setHelpMenuOpen(false);
+            }}
+            className="flex w-full items-center gap-3 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 p-2 text-left text-[#FFF7E8] transition hover:bg-[#FFF7E8]/12"
+          >
+            <Avatar profile={profile} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold">{accountName}</p>
+              <p className="text-xs text-[#DFC9A4]">{planLabel}</p>
+            </div>
+            <ChevronRight className={cn('h-4 w-4 shrink-0 transition-transform', accountMenuOpen && '-rotate-90')} />
           </button>
         </div>
       </aside>
@@ -2405,25 +2504,29 @@ function TaskModal({
 }
 
 function SettingsModal({
+  section,
   theme,
   setTheme,
+  chatOpen,
+  setChatOpen,
   profile,
   email,
   workspace,
   role,
   onClose,
-  onSignOut,
   onSaveProfile,
   onUploadAvatar,
 }: {
+  section: AccountModalView;
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
+  chatOpen: boolean;
+  setChatOpen: (open: boolean) => void;
   profile?: AppProfile;
   email: string;
   workspace?: AppWorkspace;
   role?: WorkspaceRole;
   onClose: () => void;
-  onSignOut: () => void;
   onSaveProfile: (input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string }) => Promise<void>;
   onUploadAvatar: (file: File) => Promise<string>;
 }) {
@@ -2438,11 +2541,18 @@ function SettingsModal({
   const [error, setError] = useState('');
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const modalTitles: Record<AccountModalView, string> = {
+    personalization: 'Personalization',
+    profile: 'Profile',
+    settings: 'Settings',
+    help: 'Help center',
+    about: 'About Tribu',
+  };
 
   return (
-    <ModalShell theme={theme} title="Settings" onClose={onClose}>
+    <ModalShell theme={theme} title={modalTitles[section]} onClose={onClose}>
       <div className="grid gap-5">
-        <section className={cn('rounded-lg border p-4', surface(theme))}>
+        {section === 'profile' && <section className={cn('rounded-lg border p-4', surface(theme))}>
           <div className="mb-4 flex items-center gap-3">
             <Avatar profile={{ id: profile?.id ?? '', email, display_name: displayName || 'Member', avatar_url: avatarUrl || null, timezone }} />
             <div className="min-w-0">
@@ -2542,9 +2652,9 @@ function SettingsModal({
             {saved && <p className="text-sm font-semibold text-[#0F766E]">Profile saved.</p>}
             {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
           </form>
-        </section>
+        </section>}
 
-        <section className={cn('rounded-lg border p-4', surface(theme))}>
+        {section === 'personalization' && <section className={cn('rounded-lg border p-4', surface(theme))}>
           <p className="font-bold">Appearance</p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button type="button" onClick={() => setTheme('light')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'light' ? 'border-[#E9B93E] bg-[#E9B93E] text-[#211A16]' : subtleButton(theme))}>
@@ -2556,12 +2666,51 @@ function SettingsModal({
               Dark
             </button>
           </div>
-        </section>
+          <div className="mt-5 border-t border-inherit pt-4">
+            <p className="font-bold">Workspace layout</p>
+            <label className="mt-3 flex items-center justify-between gap-4 text-sm">
+              <span><span className="block font-semibold">Discussion side panel</span><span className={cn('mt-1 block text-xs', muted(theme))}>Keep chat visible while moving between Tribu pages.</span></span>
+              <input type="checkbox" checked={chatOpen} onChange={(event) => setChatOpen(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
+            </label>
+          </div>
+        </section>}
 
-        <button onClick={onSignOut} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#8F4F2E]/30 px-4 text-sm font-semibold text-[#8F4F2E]">
-          <LogOut className="h-4 w-4" />
-          Sign out
-        </button>
+        {section === 'settings' && (
+          <div className="grid gap-3">
+            <section className={cn('rounded-lg border p-4', surface(theme))}>
+              <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Account</p>
+              <div className="mt-3 flex items-center gap-3"><Avatar profile={profile} /><div className="min-w-0"><p className="truncate font-bold">{profile?.display_name || email.split('@')[0] || 'Camp member'}</p><p className={cn('truncate text-sm', muted(theme))}>{email}</p></div></div>
+            </section>
+            <section className={cn('rounded-lg border p-4', surface(theme))}>
+              <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Plan</p>
+              <p className="mt-2 text-lg font-bold capitalize">{workspace?.plan ?? 'Free'}</p>
+              <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Your current Tribu account includes the core Camp, Trail, feed, task, and knowledge features.</p>
+            </section>
+            <section className={cn('rounded-lg border p-4', surface(theme))}>
+              <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Camp access</p>
+              <p className="mt-2 font-bold">{workspace?.name ?? 'Camp'}</p>
+              <p className={cn('mt-1 text-sm', muted(theme))}>{role ? getRoleLabel(role) : 'Member'} role</p>
+            </section>
+          </div>
+        )}
+
+        {section === 'help' && (
+          <div className="grid gap-3">
+            <HelpTopic title="Start with the Active Feed" body="Create a post in a Trail, assign it to a camp member, attach files, and continue the conversation in the discussion panel." theme={theme} />
+            <HelpTopic title="Plan work in Tasks" body="Use Board, List, or Calendar. Drag cards between stages, set priorities and due dates, and archive completed work." theme={theme} />
+            <HelpTopic title="Build shared knowledge" body="Publish how-to guides, FAQs, troubleshooting notes, and standard procedures so your camp can find answers quickly." theme={theme} />
+            <HelpTopic title="Manage access" body="Chiefs and Admins can invite people and manage roles from Admin. Members and Guests only see the areas permitted for their role." theme={theme} />
+            <a href="https://github.com/jbo11/Tribu/issues/new" target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Bug className="h-4 w-4" />Report a problem</a>
+          </div>
+        )}
+
+        {section === 'about' && (
+          <section className={cn('rounded-lg border p-5', surface(theme))}>
+            <div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#E9B93E]"><TribuLogo className="h-10 w-10" /></div><div><p className="text-lg font-bold">Tribu</p><p className={cn('text-sm', muted(theme))}>Collaborative camps for teams</p></div></div>
+            <p className={cn('mt-5 text-sm leading-7', muted(theme))}>Tribu brings conversations, project work, shared knowledge, and camp administration into one focused workspace.</p>
+            <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'Free'}</p></div>
+          </section>
+        )}
       </div>
     </ModalShell>
   );
@@ -2816,6 +2965,25 @@ function NavButton({ icon: Icon, label, active, onClick, theme }: { icon: Lucide
       <Icon className="h-4 w-4" />
       {label}
     </button>
+  );
+}
+
+function AccountMenuButton({ icon: Icon, label, trailing: TrailingIcon, active = false, onClick }: { icon: LucideIcon; label: string; trailing?: LucideIcon; active?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className={cn('flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition hover:bg-white/10', active && 'bg-white/10')}>
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {TrailingIcon && <TrailingIcon className={cn('h-4 w-4 shrink-0 transition-transform', active && 'rotate-90')} />}
+    </button>
+  );
+}
+
+function HelpTopic({ title, body, theme }: { title: string; body: string; theme: 'light' | 'dark' }) {
+  return (
+    <section className={cn('rounded-lg border p-4', surface(theme))}>
+      <p className="font-bold">{title}</p>
+      <p className={cn('mt-2 text-sm leading-6', muted(theme))}>{body}</p>
+    </section>
   );
 }
 
@@ -3387,6 +3555,16 @@ function groupReactions(reactions: AppReaction[]) {
 
 function clampThreadWidth(width: number) {
   return Math.round(Math.min(50, Math.max(20, width)) * 10) / 10;
+}
+
+function getInitialTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+}
+
+function getInitialChatOpen() {
+  if (typeof window === 'undefined') return true;
+  return window.localStorage.getItem(CHAT_OPEN_STORAGE_KEY) !== 'false';
 }
 
 function getInitialThreadWidth() {
