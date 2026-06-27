@@ -4,8 +4,8 @@ import {
   ArchiveRestore,
   Camera,
   CalendarDays,
-  CheckCircle2,
   ChevronDown,
+  CircleHelp,
   ClipboardList,
   Copy,
   Download,
@@ -16,7 +16,6 @@ import {
   Image as ImageIcon,
   Inbox,
   Loader2,
-  Lock,
   LogOut,
   Mail,
   Menu,
@@ -48,12 +47,15 @@ import {
   AppComment,
   AppAttachment,
   AppLinkPreview,
+  AppMembership,
   AppReaction,
   AppPost,
   AppProfile,
   AppSpace,
   AppTask,
   AppWorkspace,
+  KnowledgeArticle,
+  KnowledgeCategory,
   SpaceAccess,
   SortMode,
   TaskStatus,
@@ -64,7 +66,6 @@ import {
 const sortOptions: { value: SortMode; label: string }[] = [
   { value: 'active', label: 'Active' },
   { value: 'newest', label: 'Newest' },
-  { value: 'insights', label: 'Insights' },
   { value: 'assigned', label: 'Assigned' },
   { value: 'archived', label: 'Archived' },
 ];
@@ -74,6 +75,15 @@ const workspaceRoles: { role: WorkspaceRole; detail: string }[] = [
   { role: 'admin', detail: 'Members, trails, integrations, policies, and audit visibility.' },
   { role: 'member', detail: 'Posts, replies, files, tasks, and camp search.' },
   { role: 'guest', detail: 'Only invited trails and assigned work.' },
+];
+
+const knowledgeCategories: { value: KnowledgeCategory; label: string }[] = [
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'how_to', label: 'How-to guide' },
+  { value: 'faq', label: 'FAQ' },
+  { value: 'best_practice', label: 'Best practice' },
+  { value: 'troubleshooting', label: 'Troubleshooting' },
+  { value: 'sop', label: 'Standard operating procedure' },
 ];
 
 const INVITE_STORAGE_KEY = 'tribu_invite_token';
@@ -106,6 +116,8 @@ export default function App() {
   const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [profiles, setProfiles] = useState<Record<string, AppProfile>>({});
   const [tasks, setTasks] = useState<AppTask[]>([]);
+  const [memberships, setMemberships] = useState<AppMembership[]>([]);
+  const [knowledgeArticles, setKnowledgeArticles] = useState<KnowledgeArticle[]>([]);
   const [selectedPostId, setSelectedPostId] = useState('');
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
@@ -115,6 +127,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingPost, setEditingPost] = useState<AppPost | null>(null);
   const [editingTask, setEditingTask] = useState<AppTask | null>(null);
+  const [knowledgeModalOpen, setKnowledgeModalOpen] = useState(false);
+  const [editingKnowledgeArticle, setEditingKnowledgeArticle] = useState<KnowledgeArticle | null>(null);
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
   const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
@@ -135,7 +149,6 @@ export default function App() {
     const base = posts.filter((post) => {
       if (sort === 'archived') return post.state === 'archived';
       if (post.state === 'archived') return false;
-      if (sort === 'insights') return post.has_decision;
       if (sort === 'assigned') return post.metadata?.assigned_to === session?.user.id;
       return true;
     });
@@ -155,7 +168,7 @@ export default function App() {
     if (!silent) setLoading(true);
     setNotice('');
 
-    const [spaceResult, postResult, taskResult, membershipResult, decisionResult] = await Promise.all([
+    const [spaceResult, postResult, taskResult, membershipResult, knowledgeResult] = await Promise.all([
       supabase
         .from('spaces')
         .select('id, workspace_id, name, slug, access, description, archived_at, created_by, created_at, updated_at')
@@ -170,36 +183,39 @@ export default function App() {
         .limit(80),
       supabase
         .from('tasks')
-        .select('id, workspace_id, post_id, title, description, assignee_id, created_by, status, due_at, created_at, updated_at')
+        .select('id, workspace_id, post_id, title, description, assignee_id, created_by, status, due_at, archived_at, created_at, updated_at')
         .eq('workspace_id', targetWorkspaceId)
-        .neq('status', 'canceled')
+        .is('archived_at', null)
         .order('created_at', { ascending: false })
         .limit(40),
       supabase
         .from('memberships')
-        .select('user_id')
+        .select('id, workspace_id, user_id, role, joined_at')
         .eq('workspace_id', targetWorkspaceId),
       supabase
-        .from('comments')
-        .select('post_id')
+        .from('knowledge_articles')
+        .select('id, workspace_id, category, title, summary, content, created_by, created_at, updated_at')
         .eq('workspace_id', targetWorkspaceId)
-        .eq('is_decision', true),
+        .order('updated_at', { ascending: false }),
     ]);
 
     if (spaceResult.error) setNotice(spaceResult.error.message);
     if (postResult.error) setNotice(postResult.error.message);
     if (taskResult.error) setNotice(taskResult.error.message);
     if (membershipResult.error) setNotice(membershipResult.error.message);
-    if (decisionResult.error) setNotice(decisionResult.error.message);
+    if (knowledgeResult.error) setNotice(knowledgeResult.error.message);
 
     const nextSpaces = (spaceResult.data ?? []) as AppSpace[];
-    const decisionPostIds = new Set((decisionResult.data ?? []).map((comment) => String(comment.post_id)));
-    const nextPosts = ((postResult.data ?? []) as AppPost[]).map((post) => ({ ...post, has_decision: decisionPostIds.has(post.id) }));
+    const nextPosts = (postResult.data ?? []) as AppPost[];
     const nextTasks = (taskResult.data ?? []) as AppTask[];
+    const nextMemberships = (membershipResult.data ?? []) as AppMembership[];
+    const nextKnowledgeArticles = (knowledgeResult.data ?? []) as KnowledgeArticle[];
 
     setSpaces(nextSpaces);
     setPosts(nextPosts);
     setTasks(nextTasks);
+    setMemberships(nextMemberships);
+    setKnowledgeArticles(nextKnowledgeArticles);
     setSelectedPostId((current) => current || nextPosts[0]?.id || '');
     setActiveSpaceId((current) => (current === 'all' || nextSpaces.some((space) => space.id === current) ? current : 'all'));
 
@@ -209,6 +225,7 @@ export default function App() {
       if (task.assignee_id) profileIds.add(task.assignee_id);
       profileIds.add(task.created_by);
     });
+    nextKnowledgeArticles.forEach((article) => profileIds.add(article.created_by));
     (membershipResult.data ?? []).forEach((membership) => profileIds.add(String(membership.user_id)));
 
     if (profileIds.size > 0) {
@@ -416,6 +433,12 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'knowledge_articles', filter: `workspace_id=eq.${workspaceId}` }, () => {
+        void loadWorkspaceData(workspaceId, true);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'memberships', filter: `workspace_id=eq.${workspaceId}` }, () => {
+        void loadWorkspaceData(workspaceId, true);
+      })
       .subscribe((status, error) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setNotice(error?.message ?? 'Live updates could not connect. Refresh the page to see new activity while Supabase Realtime is unavailable.');
@@ -567,7 +590,7 @@ export default function App() {
 
           <div
             className="grid min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]"
-            style={{ '--thread-width': `${threadWidth}px` } as CSSProperties}
+            style={{ '--thread-width': `${threadWidth}%` } as CSSProperties}
           >
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
               {notice && (
@@ -578,7 +601,7 @@ export default function App() {
 
               {view === 'feed' && (
                 <>
-                  <Metrics posts={posts} tasks={tasks} theme={theme} />
+                  <Metrics posts={posts} tasks={tasks} knowledgeCount={knowledgeArticles.length} theme={theme} />
                   <SortBar sort={sort} setSort={setSort} theme={theme} />
                   <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1 scroll-area">
                     {currentSpacePosts.length > 0 ? (
@@ -645,6 +668,7 @@ export default function App() {
                   tasks={tasks}
                   profiles={profiles}
                   theme={theme}
+                  canManageTaskActions={canManageAdmin}
                   onCreateTask={() => setTaskModalOpen(true)}
                   onEditTask={(task) => setEditingTask(task)}
                   onDeleteTask={async (task) => {
@@ -664,34 +688,28 @@ export default function App() {
                       setNotice(getErrorMessage(caughtError));
                     }
                   }}
-                />
-              )}
-              {view === 'knowledge' && (
-                <KnowledgeView
-                  posts={posts}
-                  spaces={spaces}
-                  profiles={profiles}
-                  theme={theme}
-                  onOpenPost={(postId) => {
-                    setSelectedPostId(postId);
-                    setView('feed');
-                  }}
-                  canManagePost={(post) => post.author_id === session.user.id || canManageAdmin}
-                  onEditPost={(post) => setEditingPost(post)}
-                  onArchivePost={async (post) => {
+                  onArchiveTask={async (task) => {
                     try {
-                      await setPostArchived(post.id, true);
-                      if (selectedPostId === post.id) setSelectedPostId('');
+                      await archiveTask(task.id);
                       await loadWorkspaceData(workspaceId, true);
                     } catch (caughtError) {
                       setNotice(getErrorMessage(caughtError));
                     }
                   }}
-                  onDeletePost={async (post) => {
-                    if (!window.confirm('Delete this knowledge entry and its discussion?')) return;
+                />
+              )}
+              {view === 'knowledge' && (
+                <KnowledgeView
+                  articles={knowledgeArticles}
+                  profiles={profiles}
+                  theme={theme}
+                  canManage={canManageAdmin}
+                  onCreate={() => setKnowledgeModalOpen(true)}
+                  onEdit={(article) => setEditingKnowledgeArticle(article)}
+                  onDelete={async (article) => {
+                    if (!window.confirm('Delete this knowledge article?')) return;
                     try {
-                      await deletePost(post.id);
-                      if (selectedPostId === post.id) setSelectedPostId('');
+                      await deleteKnowledgeArticle(article.id);
                       await loadWorkspaceData(workspaceId, true);
                     } catch (caughtError) {
                       setNotice(getErrorMessage(caughtError));
@@ -703,7 +721,13 @@ export default function App() {
                 <AdminView
                   workspace={selectedWorkspace}
                   theme={theme}
+                  memberships={memberships}
+                  profiles={profiles}
                   onInvite={(email, role) => createWorkspaceInvitation(workspaceId, email, role)}
+                  onRoleChange={async (membershipId, role) => {
+                    await updateMemberRole(membershipId, role);
+                    await loadWorkspaceData(workspaceId, true);
+                  }}
                 />
               )}
             </section>
@@ -725,9 +749,9 @@ export default function App() {
                 setThreadWidth(nextWidth);
                 window.localStorage.setItem(THREAD_WIDTH_STORAGE_KEY, String(nextWidth));
               }}
-              onReply={async (body, isInsight, files, parentCommentId) => {
+              onReply={async (body, files, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
-                await createComment(selectedPost, session.user.id, body, isInsight, files, parentCommentId);
+                await createComment(selectedPost, session.user.id, body, false, files, parentCommentId);
                 await loadWorkspaceData(workspaceId, true);
                 await loadComments(selectedPost.id);
               }}
@@ -834,6 +858,31 @@ export default function App() {
           onCreate={async ({ title, description, assigneeId, dueAt }) => {
             await updateTask(editingTask.id, { title, description, assigneeId, dueAt });
             setEditingTask(null);
+            await loadWorkspaceData(workspaceId, true);
+          }}
+        />
+      )}
+
+      {knowledgeModalOpen && (
+        <KnowledgeArticleModal
+          theme={theme}
+          onClose={() => setKnowledgeModalOpen(false)}
+          onSave={async (input) => {
+            await createKnowledgeArticle(workspaceId, session.user.id, input);
+            setKnowledgeModalOpen(false);
+            await loadWorkspaceData(workspaceId, true);
+          }}
+        />
+      )}
+
+      {editingKnowledgeArticle && (
+        <KnowledgeArticleModal
+          theme={theme}
+          article={editingKnowledgeArticle}
+          onClose={() => setEditingKnowledgeArticle(null)}
+          onSave={async (input) => {
+            await updateKnowledgeArticle(editingKnowledgeArticle.id, input);
+            setEditingKnowledgeArticle(null);
             await loadWorkspaceData(workspaceId, true);
           }}
         />
@@ -981,14 +1030,12 @@ function Sidebar({
           </div>
         </section>
 
-        <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
-          <button onClick={onOpenSettings} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-sm font-semibold text-[#FFF7E8]">
+        <div className="mt-auto flex justify-center gap-2 pt-4">
+          <button aria-label="Settings" title="Settings" onClick={onOpenSettings} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-[#FFF7E8]">
             <Settings className="h-4 w-4" />
-            Settings
           </button>
-          <button onClick={onSignOut} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-sm font-semibold text-[#FFF7E8]">
+          <button aria-label="Sign out" title="Sign out" onClick={onSignOut} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-[#FFF7E8]">
             <LogOut className="h-4 w-4" />
-            Sign out
           </button>
         </div>
       </aside>
@@ -996,15 +1043,14 @@ function Sidebar({
   );
 }
 
-function Metrics({ posts, tasks, theme }: { posts: AppPost[]; tasks: AppTask[]; theme: 'light' | 'dark' }) {
+function Metrics({ posts, tasks, knowledgeCount, theme }: { posts: AppPost[]; tasks: AppTask[]; knowledgeCount: number; theme: 'light' | 'dark' }) {
   const openPosts = posts.filter((post) => post.state === 'open').length;
-  const insights = posts.filter((post) => post.has_decision).length;
   const openTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'canceled').length;
 
   return (
     <div className="grid shrink-0 gap-3 sm:grid-cols-3">
       <MetricCard label="Open posts" value={openPosts} theme={theme} />
-      <MetricCard label="Insights" value={insights} theme={theme} />
+      <MetricCard label="Knowledge" value={knowledgeCount} theme={theme} />
       <MetricCard label="Open tasks" value={openTasks} theme={theme} />
     </div>
   );
@@ -1177,14 +1223,13 @@ function ThreadPanel({
   canManage: boolean;
   width: number;
   onWidthChange: (width: number) => void;
-  onReply: (body: string, isInsight: boolean, files: File[], parentCommentId: string | null) => Promise<void>;
+  onReply: (body: string, files: File[], parentCommentId: string | null) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
   onForward: (messageIds: string[], targetPostIds: string[]) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
   const [files, setFiles] = useState<File[]>([]);
-  const [isInsight, setIsInsight] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [dragActive, setDragActive] = useState(false);
@@ -1295,7 +1340,6 @@ function ThreadPanel({
                   body={comment.body}
                   timestamp={comment.created_at}
                   theme={theme}
-                  isInsight={comment.is_decision}
                   attachments={attachments.filter((attachment) => attachment.comment_id === comment.id)}
                   workspaceId={comment.workspace_id}
                   reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
@@ -1340,10 +1384,9 @@ function ThreadPanel({
           setSubmitting(true);
           setError('');
           try {
-            await onReply(reply.trim(), isInsight, files, replyingTo?.id ?? null);
+            await onReply(reply.trim(), files, replyingTo?.id ?? null);
             setReply('');
             setFiles([]);
-            setIsInsight(false);
             setReplyingTo(null);
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
@@ -1420,10 +1463,6 @@ function ThreadPanel({
               />
             )}
           </div>
-          <label className={cn('flex items-center gap-2 text-sm', muted(theme))}>
-            <input type="checkbox" checked={isInsight} onChange={(event) => setIsInsight(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
-            Insight
-          </label>
           <button disabled={submitting || (!reply.trim() && files.length === 0)} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Reply
@@ -1448,7 +1487,7 @@ function ThreadPanel({
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; isInsight?: boolean; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
+function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
@@ -1480,7 +1519,6 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, a
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</p>
         </div>
-        {isInsight && <CheckCircle2 className="ml-auto h-4 w-4 text-[#0F766E]" />}
       </div>
       {parentComment && (
         <div className={cn('mb-3 border-l-2 border-[#E9B93E] pl-3 text-xs', muted(theme))}>
@@ -1553,30 +1591,31 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, a
 }
 
 function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 'dark'; width: number; onWidthChange: (width: number) => void }) {
-  const dragStartRef = useRef<{ x: number; width: number } | null>(null);
+  const dragStartRef = useRef<{ x: number; width: number; containerWidth: number } | null>(null);
   return (
     <div
       role="separator"
       aria-label="Resize discussion pane"
       aria-orientation="vertical"
-      aria-valuemin={320}
-      aria-valuemax={720}
+      aria-valuemin={20}
+      aria-valuemax={50}
       aria-valuenow={Math.round(width)}
       tabIndex={0}
       title="Drag to resize discussion pane"
       onPointerDown={(event) => {
-        dragStartRef.current = { x: event.clientX, width };
+        dragStartRef.current = { x: event.clientX, width, containerWidth: event.currentTarget.parentElement?.parentElement?.clientWidth ?? window.innerWidth };
         event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={(event) => {
         if (!dragStartRef.current) return;
-        onWidthChange(dragStartRef.current.width + dragStartRef.current.x - event.clientX);
+        const deltaPercent = ((dragStartRef.current.x - event.clientX) / dragStartRef.current.containerWidth) * 100;
+        onWidthChange(dragStartRef.current.width + deltaPercent);
       }}
       onPointerUp={() => { dragStartRef.current = null; }}
       onLostPointerCapture={() => { dragStartRef.current = null; }}
       onKeyDown={(event) => {
-        if (event.key === 'ArrowLeft') { event.preventDefault(); onWidthChange(width + 24); }
-        if (event.key === 'ArrowRight') { event.preventDefault(); onWidthChange(width - 24); }
+        if (event.key === 'ArrowLeft') { event.preventDefault(); onWidthChange(width + 2); }
+        if (event.key === 'ArrowRight') { event.preventDefault(); onWidthChange(width - 2); }
       }}
       className={cn('absolute inset-y-0 left-0 z-40 w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[#E9B93E]' : 'after:bg-[#DFC9A4] hover:after:bg-[#8F4F2E]')}
     />
@@ -1748,18 +1787,22 @@ function TasksView({
   tasks,
   profiles,
   theme,
+  canManageTaskActions,
   onCreateTask,
   onEditTask,
   onDeleteTask,
   onStatusChange,
+  onArchiveTask,
 }: {
   tasks: AppTask[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
+  canManageTaskActions: boolean;
   onCreateTask: () => void;
   onEditTask: (task: AppTask) => void;
   onDeleteTask: (task: AppTask) => Promise<void>;
   onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>;
+  onArchiveTask: (task: AppTask) => Promise<void>;
 }) {
   if (tasks.length === 0) {
     return <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create tasks for follow-ups, assignments, and camp work that should not get lost in posts." actionLabel="Create task" onAction={onCreateTask} />;
@@ -1798,7 +1841,7 @@ function TasksView({
                 <option value="canceled">Canceled</option>
               </select>
               <div className="flex items-center gap-2 xl:justify-end">
-                <button
+                {canManageTaskActions && <button
                   type="button"
                   aria-label="Edit task"
                   title="Edit task"
@@ -1806,8 +1849,8 @@ function TasksView({
                   className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
                 >
                   <Pencil className="h-4 w-4" />
-                </button>
-                <button
+                </button>}
+                {canManageTaskActions && <button
                   type="button"
                   aria-label="Delete task"
                   title="Delete task"
@@ -1815,7 +1858,18 @@ function TasksView({
                   className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
                 >
                   <Trash2 className="h-4 w-4" />
-                </button>
+                </button>}
+                {(task.status === 'done' || task.status === 'canceled') && (
+                  <button
+                    type="button"
+                    aria-label="Archive task"
+                    title="Archive task"
+                    onClick={() => void onArchiveTask(task)}
+                    className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
+                  >
+                    <Archive className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1826,111 +1880,71 @@ function TasksView({
 }
 
 function KnowledgeView({
-  posts,
-  spaces,
+  articles,
   profiles,
   theme,
-  onOpenPost,
-  canManagePost,
-  onEditPost,
-  onArchivePost,
-  onDeletePost,
+  canManage,
+  onCreate,
+  onEdit,
+  onDelete,
 }: {
-  posts: AppPost[];
-  spaces: AppSpace[];
+  articles: KnowledgeArticle[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
-  onOpenPost: (postId: string) => void;
-  canManagePost: (post: AppPost) => boolean;
-  onEditPost: (post: AppPost) => void;
-  onArchivePost: (post: AppPost) => Promise<void>;
-  onDeletePost: (post: AppPost) => Promise<void>;
+  canManage: boolean;
+  onCreate: () => void;
+  onEdit: (article: KnowledgeArticle) => void;
+  onDelete: (article: KnowledgeArticle) => Promise<void>;
 }) {
-  const knowledgePosts = posts
-    .filter((post) => post.state !== 'archived' && (post.has_decision || post.state === 'read_only' || post.state === 'locked'))
-    .sort((a, b) => Number(b.has_decision) - Number(a.has_decision) || new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime());
-
-  if (knowledgePosts.length === 0) {
-    return (
-      <StaticPanel theme={theme} title="Knowledge" icon={FileText}>
-        <EmptyState theme={theme} icon={FileText} title="No knowledge entries yet" body="Mark important replies as Insights to turn active discussions into a searchable camp knowledge base." />
-      </StaticPanel>
-    );
-  }
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<KnowledgeCategory | 'all'>('all');
+  const [selectedArticleId, setSelectedArticleId] = useState(articles[0]?.id ?? '');
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleArticles = articles.filter((article) => {
+    if (category !== 'all' && article.category !== category) return false;
+    if (!normalizedQuery) return true;
+    return `${article.title} ${article.summary ?? ''} ${article.content}`.toLowerCase().includes(normalizedQuery);
+  });
+  const selectedArticle = visibleArticles.find((article) => article.id === selectedArticleId) ?? visibleArticles[0];
 
   return (
-    <StaticPanel theme={theme} title="Knowledge" icon={FileText}>
-      <div className="grid gap-3 overflow-y-auto pr-1 scroll-area">
-        {knowledgePosts.map((post) => {
-          const space = spaces.find((item) => item.id === post.space_id);
-          const profile = profiles[post.author_id];
-          const canManage = canManagePost(post);
-          return (
-            <div
-              key={post.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => onOpenPost(post.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') onOpenPost(post.id);
-              }}
-              className={cn('w-full rounded-lg border p-4 text-left transition hover:border-[#E9B93E]', surface(theme))}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                {post.has_decision && <span className="rounded-full bg-[#D1FAE5] px-2.5 py-1 text-xs font-semibold text-[#065F46]">Insight</span>}
-                {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#DFC9A4]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
-                <span className={cn('ml-auto text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
-              </div>
-              <h3 className="mt-3 text-lg font-bold">{post.title}</h3>
-              <p className={cn('mt-2 line-clamp-3 text-sm leading-6', muted(theme))}>{post.body}</p>
-              <div className="mt-4 flex items-center gap-3">
-                <Avatar profile={profile} />
-                <span className="text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
-                <button
-                  type="button"
-                  aria-label="Archive knowledge entry"
-                  title="Archive knowledge entry"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void onArchivePost(post);
-                  }}
-                  className={cn('ml-auto inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
-                >
-                  <Archive className="h-3.5 w-3.5" />
-                </button>
-                {canManage && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      aria-label="Edit knowledge entry"
-                      title="Edit knowledge entry"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onEditPost(post);
-                      }}
-                      className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Delete knowledge entry"
-                      title="Delete knowledge entry"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onDeletePost(post);
-                      }}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+    <StaticPanel theme={theme} title="Knowledge base" icon={FileText}>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <label className={cn('flex h-11 min-w-60 flex-1 items-center gap-2 rounded-lg border px-3', surface(theme))}>
+          <Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search guides, FAQs, and procedures" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+        </label>
+        <select value={category} onChange={(event) => setCategory(event.target.value as KnowledgeCategory | 'all')} className={cn('h-11 rounded-lg border bg-transparent px-3 text-sm font-semibold outline-none', subtleButton(theme))}>
+          <option value="all">All categories</option>
+          {knowledgeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+        </select>
+        <button onClick={onCreate} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New article</button>
       </div>
+      {visibleArticles.length === 0 ? (
+        <EmptyState theme={theme} icon={FileText} title="No knowledge articles found" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting steps, or standard operating procedures." actionLabel="Create article" onAction={onCreate} />
+      ) : (
+        <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.5fr)]">
+          <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1 scroll-area">
+            {visibleArticles.map((article) => (
+              <button key={article.id} onClick={() => setSelectedArticleId(article.id)} className={cn('w-full rounded-lg border p-4 text-left transition', selectedArticle?.id === article.id ? 'border-[#E9B93E] bg-[#FFF3C4]/60' : surface(theme))}>
+                <span className={cn('text-xs font-semibold uppercase tracking-[0.12em]', muted(theme))}>{getKnowledgeCategoryLabel(article.category)}</span>
+                <span className="mt-2 block font-bold">{article.title}</span>
+                {article.summary && <span className={cn('mt-1 block line-clamp-2 text-sm', muted(theme))}>{article.summary}</span>}
+              </button>
+            ))}
+          </div>
+          {selectedArticle && (
+            <article className={cn('max-h-[62vh] overflow-y-auto rounded-lg border p-6 scroll-area', surface(theme))}>
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1"><p className={cn('text-xs font-semibold uppercase tracking-[0.14em]', muted(theme))}>{getKnowledgeCategoryLabel(selectedArticle.category)}</p><h2 className="mt-2 text-2xl font-bold">{selectedArticle.title}</h2></div>
+                {canManage && <div className="flex gap-2"><button aria-label="Edit article" title="Edit article" onClick={() => onEdit(selectedArticle)} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><Pencil className="h-4 w-4" /></button><button aria-label="Delete article" title="Delete article" onClick={() => void onDelete(selectedArticle)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"><Trash2 className="h-4 w-4" /></button></div>}
+              </div>
+              {selectedArticle.summary && <p className={cn('mt-4 border-l-2 border-[#E9B93E] pl-4 text-sm leading-6', muted(theme))}>{selectedArticle.summary}</p>}
+              <div className={cn('mt-6 whitespace-pre-wrap text-sm leading-7', muted(theme))}>{selectedArticle.content}</div>
+              <div className="mt-8 flex items-center gap-3 border-t border-inherit pt-4"><Avatar profile={profiles[selectedArticle.created_by]} /><div><p className="text-sm font-semibold">{profiles[selectedArticle.created_by]?.display_name ?? 'Camp member'}</p><p className={cn('text-xs', muted(theme))}>Updated {formatTimeAgo(selectedArticle.updated_at)}</p></div></div>
+            </article>
+          )}
+        </div>
+      )}
     </StaticPanel>
   );
 }
@@ -1938,12 +1952,26 @@ function KnowledgeView({
 function AdminView({
   workspace,
   theme,
+  memberships,
+  profiles,
   onInvite,
+  onRoleChange,
 }: {
   workspace?: AppWorkspace;
   theme: 'light' | 'dark';
+  memberships: AppMembership[];
+  profiles: Record<string, AppProfile>;
   onInvite: (email: string, role: WorkspaceRole) => Promise<string>;
+  onRoleChange: (membershipId: string, role: WorkspaceRole) => Promise<void>;
 }) {
+  const [permissionsHelpOpen, setPermissionsHelpOpen] = useState(false);
+  const [roleError, setRoleError] = useState('');
+  const groups: { title: string; roles: WorkspaceRole[] }[] = [
+    { title: 'Admins', roles: ['owner', 'admin'] },
+    { title: 'Members', roles: ['member'] },
+    { title: 'Guests', roles: ['guest'] },
+  ];
+
   return (
     <StaticPanel theme={theme} title="Admin" icon={ShieldCheck}>
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1952,21 +1980,68 @@ function AdminView({
           <h2 className="mt-2 text-xl font-bold">{workspace?.name}</h2>
           <p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'free'} plan</p>
         </div>
-        <div className={cn('rounded-lg border p-4', surface(theme))}>
-          <p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Permissions</p>
-          <div className="mt-3 space-y-3">
-            {workspaceRoles.map(({ role, detail }) => (
-              <div key={role} className="flex gap-3">
-                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-[#8F4F2E]" />
-                <div>
-                  <p className="text-sm font-semibold capitalize">{getRoleLabel(role)}</p>
-                  <p className={cn('text-sm', muted(theme))}>{detail}</p>
-                </div>
-              </div>
-            ))}
+        <div className={cn('relative rounded-lg border p-4', surface(theme))}>
+          <div className="flex items-center justify-between gap-3">
+            <p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Permissions</p>
+            <button type="button" aria-label="How permissions work" title="How permissions work" onClick={() => setPermissionsHelpOpen((open) => !open)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-lg border', subtleButton(theme))}>
+              <CircleHelp className="h-4 w-4" />
+            </button>
           </div>
+          {permissionsHelpOpen && (
+            <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+              <div className="space-y-3">
+                {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
+              </div>
+            </div>
+          )}
+          <InvitePanel theme={theme} onInvite={onInvite} />
         </div>
-        <InvitePanel theme={theme} onInvite={onInvite} />
+
+        <section className="xl:col-span-2">
+          <div className="mb-3 flex items-center justify-between">
+            <div><h3 className="font-bold">People and roles</h3><p className={cn('text-sm', muted(theme))}>Manage camp access without opening individual profiles.</p></div>
+          </div>
+          <div className="grid gap-5">
+            {groups.map((group) => {
+              const groupMemberships = memberships.filter((membership) => group.roles.includes(membership.role));
+              return (
+                <div key={group.title}>
+                  <p className={cn('mb-2 text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>{group.title} · {groupMemberships.length}</p>
+                  <div className="grid gap-2">
+                    {groupMemberships.map((membership) => {
+                      const member = profiles[membership.user_id];
+                      return (
+                        <div key={membership.id} className={cn('grid items-center gap-3 rounded-lg border p-3 md:grid-cols-[auto_minmax(120px,1fr)_minmax(180px,1.4fr)_minmax(130px,1fr)_150px]', surface(theme))}>
+                          <Avatar profile={member} />
+                          <span className="min-w-0 truncate text-sm font-semibold">{member?.display_name ?? 'Camp member'}</span>
+                          <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.email ?? 'No email'}</span>
+                          <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.phone || 'No contact number'}</span>
+                          <select
+                            value={membership.role}
+                            disabled={membership.role === 'owner'}
+                            aria-label={`Role for ${member?.display_name ?? 'member'}`}
+                            onChange={async (event) => {
+                              setRoleError('');
+                              try { await onRoleChange(membership.id, event.target.value as WorkspaceRole); }
+                              catch (caughtError) { setRoleError(getErrorMessage(caughtError)); }
+                            }}
+                            className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-70', subtleButton(theme))}
+                          >
+                            {membership.role === 'owner' && <option value="owner">Chief</option>}
+                            <option value="admin">Admin</option>
+                            <option value="member">Member</option>
+                            <option value="guest">Guest</option>
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {roleError && <p className="mt-3 text-sm font-semibold text-[#B91C1C]">{roleError}</p>}
+        </section>
       </div>
     </StaticPanel>
   );
@@ -1981,18 +2056,18 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
   const [error, setError] = useState('');
 
   return (
-    <div className={cn('rounded-lg border p-4 xl:col-span-2', surface(theme))}>
+    <div className="mt-5 border-t border-inherit pt-4">
       <div className="mb-4 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FFF3C4] text-[#8F4F2E]">
           <UserPlus className="h-5 w-5" />
         </div>
         <div>
           <h3 className="font-bold">Invite by role</h3>
-          <p className={cn('text-sm', muted(theme))}>Add Admins, Members, or Guests with an invite link tied to their email.</p>
+          <p className={cn('text-sm', muted(theme))}>Invite an Admin, Member, or Guest using their camp email.</p>
         </div>
       </div>
       <form
-        className="grid gap-3 md:grid-cols-[1fr_160px_auto]"
+        className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px]"
         onSubmit={async (event) => {
           event.preventDefault();
           if (!email.trim()) return;
@@ -2021,7 +2096,7 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
           <option value="member">Member</option>
           <option value="guest">Guest</option>
         </select>
-        <button disabled={submitting || !email.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+        <button disabled={submitting || !email.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
           Invite
         </button>
@@ -2118,6 +2193,33 @@ function PostComposer({
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
           {initialPost ? 'Save post' : 'Publish'}
         </button>
+      </form>
+    </ModalShell>
+  );
+}
+
+function KnowledgeArticleModal({ theme, article, onClose, onSave }: { theme: 'light' | 'dark'; article?: KnowledgeArticle; onClose: () => void; onSave: (input: { category: KnowledgeCategory; title: string; summary: string; content: string }) => Promise<void> }) {
+  const [category, setCategory] = useState<KnowledgeCategory>(article?.category ?? 'documentation');
+  const [title, setTitle] = useState(article?.title ?? '');
+  const [summary, setSummary] = useState(article?.summary ?? '');
+  const [content, setContent] = useState(article?.content ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <ModalShell theme={theme} title={article ? 'Edit knowledge article' : 'New knowledge article'} onClose={onClose}>
+      <form className="grid gap-4" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!title.trim() || !content.trim()) return;
+        setSubmitting(true); setError('');
+        try { await onSave({ category, title: title.trim(), summary: summary.trim(), content: content.trim() }); }
+        catch (caughtError) { setError(getErrorMessage(caughtError)); setSubmitting(false); }
+      }}>
+        <label className="grid gap-2 text-sm font-semibold">Category<select value={category} onChange={(event) => setCategory(event.target.value as KnowledgeCategory)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>{knowledgeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label className="grid gap-2 text-sm font-semibold">Title<input value={title} onChange={(event) => setTitle(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Summary<input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="A short description for search results" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Article content<textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Write clear steps, answers, or procedures..." className={cn('h-64 resize-y rounded-lg border bg-transparent p-3 leading-6 outline-none', subtleButton(theme))} /></label>
+        <button disabled={submitting || !title.trim() || !content.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:opacity-50">{submitting && <Loader2 className="h-4 w-4 animate-spin" />}{article ? 'Save article' : 'Publish article'}</button>
+        {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
       </form>
     </ModalShell>
   );
@@ -2865,7 +2967,7 @@ async function setPostArchived(postId: string, archived: boolean) {
   if (error) throw error;
 }
 
-async function createComment(post: AppPost, userId: string, body: string, isInsight: boolean, files: File[], parentCommentId: string | null) {
+async function createComment(post: AppPost, userId: string, body: string, isDecision: boolean, files: File[], parentCommentId: string | null) {
   if (!supabase) return;
   const { data: comment, error } = await supabase
     .from('comments')
@@ -2874,7 +2976,7 @@ async function createComment(post: AppPost, userId: string, body: string, isInsi
       post_id: post.id,
       author_id: userId,
       body,
-      is_decision: isInsight,
+      is_decision: isDecision,
       parent_comment_id: parentCommentId,
     })
     .select('id')
@@ -3066,6 +3168,38 @@ async function deleteTask(taskId: string) {
   if (!data) throw new Error('The task was not deleted. Apply the latest Supabase migration and confirm your account is the creator, assignee, Chief, or admin.');
 }
 
+async function archiveTask(taskId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('archive_completed_task', { target_task_id: taskId });
+  if (error) throw error;
+}
+
+async function createKnowledgeArticle(workspaceId: string, userId: string, input: { category: KnowledgeCategory; title: string; summary: string; content: string }) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('knowledge_articles').insert({ workspace_id: workspaceId, created_by: userId, category: input.category, title: input.title, summary: input.summary || null, content: input.content });
+  if (error) throw error;
+}
+
+async function updateKnowledgeArticle(articleId: string, input: { category: KnowledgeCategory; title: string; summary: string; content: string }) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.from('knowledge_articles').update({ category: input.category, title: input.title, summary: input.summary || null, content: input.content }).eq('id', articleId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('This article could not be updated.');
+}
+
+async function deleteKnowledgeArticle(articleId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.from('knowledge_articles').delete().eq('id', articleId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('This article could not be deleted.');
+}
+
+async function updateMemberRole(membershipId: string, role: WorkspaceRole) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('update_member_role', { target_membership_id: membershipId, new_role: role });
+  if (error) throw error;
+}
+
 async function updateProfile(
   userId: string,
   input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string },
@@ -3162,14 +3296,13 @@ function groupReactions(reactions: AppReaction[]) {
 }
 
 function clampThreadWidth(width: number) {
-  const viewportMaximum = typeof window === 'undefined' ? 720 : Math.max(320, Math.min(720, window.innerWidth * 0.55));
-  return Math.round(Math.min(viewportMaximum, Math.max(320, width)));
+  return Math.round(Math.min(50, Math.max(20, width)) * 10) / 10;
 }
 
 function getInitialThreadWidth() {
-  if (typeof window === 'undefined') return 390;
+  if (typeof window === 'undefined') return 30;
   const savedWidth = Number(window.localStorage.getItem(THREAD_WIDTH_STORAGE_KEY));
-  return clampThreadWidth(Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : 390);
+  return clampThreadWidth(Number.isFinite(savedWidth) && savedWidth >= 20 && savedWidth <= 50 ? savedWidth : 30);
 }
 
 function normalizeSharedUrl(value: string) {
@@ -3216,6 +3349,10 @@ function getTrailAccessLabel(access: SpaceAccess) {
     invite_only: 'invite-only',
   };
   return labels[access];
+}
+
+function getKnowledgeCategoryLabel(category: KnowledgeCategory) {
+  return knowledgeCategories.find((item) => item.value === category)?.label ?? category;
 }
 
 function getInitialInviteToken() {

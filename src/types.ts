@@ -2,8 +2,9 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'guest';
 export type SpaceAccess = 'public' | 'private' | 'invite_only';
 export type ContentState = 'open' | 'read_only' | 'locked' | 'archived';
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
-export type SortMode = 'active' | 'newest' | 'insights' | 'assigned' | 'archived';
+export type SortMode = 'active' | 'newest' | 'assigned' | 'archived';
 export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'admin';
+export type KnowledgeCategory = 'documentation' | 'how_to' | 'faq' | 'best_practice' | 'troubleshooting' | 'sop';
 
 export interface AppProfile {
   id: string;
@@ -26,6 +27,14 @@ export interface AppWorkspace {
   plan: 'free' | 'pro' | 'business' | 'enterprise';
   created_at: string;
   role?: WorkspaceRole;
+}
+
+export interface AppMembership {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  role: WorkspaceRole;
+  joined_at: string;
 }
 
 export interface AppSpace {
@@ -113,6 +122,19 @@ export interface AppTask {
   created_by: string;
   status: TaskStatus;
   due_at: string | null;
+  archived_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeArticle {
+  id: string;
+  workspace_id: string;
+  category: KnowledgeCategory;
+  title: string;
+  summary: string | null;
+  content: string;
+  created_by: string;
   created_at: string;
   updated_at: string;
 }
