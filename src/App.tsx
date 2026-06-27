@@ -26,6 +26,8 @@ import {
   Menu,
   MessageSquare,
   Moon,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   Phone,
   Plus,
@@ -138,6 +140,7 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
   const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
+  const [chatOpen, setChatOpen] = useState(true);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
@@ -582,6 +585,11 @@ export default function App() {
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">New post</span>
               </button>
+              {!chatOpen && (
+                <button type="button" aria-label="Toggle side panel" title="Toggle side panel" onClick={() => setChatOpen(true)} className={cn('inline-flex h-11 w-11 items-center justify-center rounded-lg border', surface(theme))}>
+                  <PanelRightOpen className="h-4 w-4" />
+                </button>
+              )}
             </div>
             <label className={cn('mt-3 flex h-10 items-center gap-2 rounded-lg border px-3 md:hidden', surface(theme))}>
               <Search className={cn('h-4 w-4 shrink-0', muted(theme))} />
@@ -595,7 +603,7 @@ export default function App() {
           </header>
 
           <div
-            className={cn('grid min-h-0 grid-cols-1 overflow-hidden', view === 'feed' && 'xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]')}
+            className={cn('grid min-h-0 grid-cols-1 overflow-hidden', chatOpen && 'xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]')}
             style={{ '--thread-width': `${threadWidth}%` } as CSSProperties}
           >
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
@@ -738,7 +746,7 @@ export default function App() {
               )}
             </section>
 
-            {view === 'feed' && <ThreadPanel
+            {chatOpen && <ThreadPanel
               post={selectedPost}
               profile={selectedProfile}
               comments={comments}
@@ -755,6 +763,7 @@ export default function App() {
                 setThreadWidth(nextWidth);
                 window.localStorage.setItem(THREAD_WIDTH_STORAGE_KEY, String(nextWidth));
               }}
+              onClose={() => setChatOpen(false)}
               onReply={async (body, files, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, false, files, parentCommentId);
@@ -1212,6 +1221,7 @@ function ThreadPanel({
   canManage,
   width,
   onWidthChange,
+  onClose,
   onReply,
   onReact,
   onDeleteComment,
@@ -1229,6 +1239,7 @@ function ThreadPanel({
   canManage: boolean;
   width: number;
   onWidthChange: (width: number) => void;
+  onClose: () => void;
   onReply: (body: string, files: File[], parentCommentId: string | null) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
@@ -1301,6 +1312,15 @@ function ThreadPanel({
     return (
       <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
         <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
+        <button
+          type="button"
+          aria-label="Toggle side panel"
+          title="Toggle side panel"
+          onClick={onClose}
+          className={cn('absolute right-4 top-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
+        >
+          <PanelRightClose className="h-4 w-4" />
+        </button>
         <EmptyState theme={theme} icon={MessageSquare} title="No thread selected" body="Select or create a post to view its discussion." />
       </aside>
     );
@@ -1315,6 +1335,15 @@ function ThreadPanel({
             <StatusPill state={post.state} />
             <h2 className="mt-3 text-xl font-bold tracking-tight">{post.title}</h2>
           </div>
+          <button
+            type="button"
+            aria-label="Toggle side panel"
+            title="Toggle side panel"
+            onClick={onClose}
+            className={cn('inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', subtleButton(theme))}
+          >
+            <PanelRightClose className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
@@ -2797,7 +2826,13 @@ function StatusPill({ state }: { state: AppPost['state'] }) {
     locked: 'bg-[#FEE2E2] text-[#B91C1C]',
     archived: 'bg-[#E5E7EB] text-[#374151]',
   };
-  return <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold capitalize', styles[state])}>{state.replace('_', ' ')}</span>;
+  const labels: Record<AppPost['state'], string> = {
+    open: 'Active',
+    read_only: 'Read only',
+    locked: 'Locked',
+    archived: 'Archived',
+  };
+  return <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', styles[state])}>{labels[state]}</span>;
 }
 
 function Avatar({ profile }: { profile?: AppProfile }) {
