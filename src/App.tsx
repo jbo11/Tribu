@@ -34,6 +34,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Presentation,
   Reply as ReplyIcon,
   Search,
   Send,
@@ -41,8 +42,8 @@ import {
   Share2,
   ShieldCheck,
   Smile,
-  Sticker,
   Sun,
+  Table2,
   Trash2,
   User,
   UserPlus,
@@ -149,6 +150,7 @@ export default function App() {
   const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
   const [chatOpen, setChatOpen] = useState(true);
   const [chatOnOtherPages, setChatOnOtherPages] = useState(getInitialChatOpen);
+  const selectedPostIdRef = useRef('');
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
@@ -162,6 +164,10 @@ export default function App() {
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
     [profiles],
   );
+
+  useEffect(() => {
+    selectedPostIdRef.current = selectedPost?.id ?? '';
+  }, [selectedPost?.id]);
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -457,15 +463,16 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        void loadWorkspaceData(workspaceId, true);
-        if (selectedPost?.id) void loadComments(selectedPost.id);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `workspace_id=eq.${workspaceId}` }, (payload) => {
+        const changedPostId = String((payload.new as { post_id?: string })?.post_id ?? (payload.old as { post_id?: string })?.post_id ?? '');
+        const activePostId = selectedPostIdRef.current;
+        if (activePostId && (!changedPostId || changedPostId === activePostId)) void loadComments(activePostId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        if (selectedPost?.id) void loadComments(selectedPost.id);
+        if (selectedPostIdRef.current) void loadComments(selectedPostIdRef.current);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions', filter: `workspace_id=eq.${workspaceId}` }, () => {
-        if (selectedPost?.id) void loadComments(selectedPost.id);
+        if (selectedPostIdRef.current) void loadComments(selectedPostIdRef.current);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
@@ -485,7 +492,7 @@ export default function App() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [loadComments, loadWorkspaceData, selectedPost?.id, workspaceId]);
+  }, [loadComments, loadWorkspaceData, workspaceId]);
 
   useEffect(() => {
     if (!selectedPost?.id) {
@@ -1375,6 +1382,7 @@ function ThreadPanel({
   const [forwarding, setForwarding] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
+  const [cameraAvailable, setCameraAvailable] = useState(false);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1398,6 +1406,30 @@ function ThreadPanel({
     document.addEventListener('pointerdown', closeMenu);
     return () => document.removeEventListener('pointerdown', closeMenu);
   }, [attachmentMenuOpen]);
+
+  useEffect(() => {
+    let active = true;
+    const mediaDevices = navigator.mediaDevices;
+    const detectCamera = async () => {
+      const mobileCapture = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && Boolean(mediaDevices?.getUserMedia);
+      if (!mediaDevices?.enumerateDevices) {
+        if (active) setCameraAvailable(mobileCapture);
+        return;
+      }
+      try {
+        const devices = await mediaDevices.enumerateDevices();
+        if (active) setCameraAvailable(mobileCapture || devices.some((device) => device.kind === 'videoinput'));
+      } catch {
+        if (active) setCameraAvailable(mobileCapture);
+      }
+    };
+    void detectCamera();
+    mediaDevices?.addEventListener?.('devicechange', detectCamera);
+    return () => {
+      active = false;
+      mediaDevices?.removeEventListener?.('devicechange', detectCamera);
+    };
+  }, []);
 
   const addFiles = (incoming: FileList | File[]) => {
     const accepted = Array.from(incoming).filter((file) => file.size <= 100 * 1024 * 1024);
@@ -1499,6 +1531,7 @@ function ThreadPanel({
                   workspaceId={comment.workspace_id}
                   reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
                   currentUserId={currentUserId}
+                  preferMenuAbove
                   parentComment={comments.find((item) => item.id === comment.parent_comment_id)}
                   onReply={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
                   onReact={(emoji) => onReact(comment.id, emoji)}
@@ -1608,13 +1641,14 @@ function ThreadPanel({
             {attachmentMenuOpen && (
               <AttachmentMenu
                 theme={theme}
-                onDocument={() => openFilePicker('.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip')}
+                cameraAvailable={cameraAvailable}
+                onDocument={() => openFilePicker('.pdf,.doc,.docx,.txt,.rtf')}
                 onMedia={() => openFilePicker('image/*,video/*')}
                 onCamera={() => openFilePicker('image/*,video/*', true)}
                 onAudio={() => openFilePicker('audio/*')}
-                onContact={() => openFilePicker('.vcf,text/vcard')}
-                onEvent={() => openFilePicker('.ics,text/calendar')}
-                onSticker={() => openFilePicker('image/gif,image/webp,image/png')}
+                onSpreadsheet={() => openFilePicker('.csv,.xls,.xlsx,.ods')}
+                onPresentation={() => openFilePicker('.ppt,.pptx,.odp,.key')}
+                onArchive={() => openFilePicker('.zip,.rar,.7z,.tar,.gz')}
               />
             )}
           </div>
@@ -1642,7 +1676,7 @@ function ThreadPanel({
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
+function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, preferMenuAbove = false, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; preferMenuAbove?: boolean; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
@@ -1716,7 +1750,13 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
               }
               const rect = event.currentTarget.getBoundingClientRect();
               const menuHeight = onDelete ? 210 : 170;
-              const top = rect.bottom + 8 + menuHeight <= window.innerHeight ? rect.bottom + 8 : rect.top - menuHeight - 8;
+              const hasRoomAbove = rect.top - menuHeight - 8 >= 8;
+              const hasRoomBelow = rect.bottom + menuHeight + 8 <= window.innerHeight;
+              const top = preferMenuAbove && hasRoomAbove
+                ? rect.top - menuHeight - 8
+                : hasRoomBelow
+                  ? rect.bottom + 8
+                  : Math.max(8, rect.top - menuHeight - 8);
               setMenuPosition({
                 top: Math.max(8, top),
                 left: Math.min(window.innerWidth - 200, Math.max(8, rect.right - 192)),
@@ -1868,20 +1908,20 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
   );
 }
 
-function AttachmentMenu({ theme, onDocument, onMedia, onCamera, onAudio, onContact, onEvent, onSticker }: { theme: 'light' | 'dark'; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void; onContact: () => void; onEvent: () => void; onSticker: () => void }) {
-  const items: { label: string; icon: LucideIcon; action: () => void; color: string }[] = [
+function AttachmentMenu({ theme, cameraAvailable, onDocument, onMedia, onCamera, onAudio, onSpreadsheet, onPresentation, onArchive }: { theme: 'light' | 'dark'; cameraAvailable: boolean; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void; onSpreadsheet: () => void; onPresentation: () => void; onArchive: () => void }) {
+  const items: { label: string; icon: LucideIcon; action: () => void; color: string; disabled?: boolean }[] = [
     { label: 'Document', icon: FileText, action: onDocument, color: 'text-[#7C3AED]' },
     { label: 'Photos & videos', icon: ImageIcon, action: onMedia, color: 'text-[#2563EB]' },
-    { label: 'Camera', icon: Camera, action: onCamera, color: 'text-[#DB2777]' },
+    { label: 'Camera', icon: Camera, action: onCamera, color: 'text-[#DB2777]', disabled: !cameraAvailable },
     { label: 'Audio', icon: Headphones, action: onAudio, color: 'text-[#EA580C]' },
-    { label: 'Contact', icon: User, action: onContact, color: 'text-[#0284C7]' },
-    { label: 'Event', icon: CalendarDays, action: onEvent, color: 'text-[#C026D3]' },
-    { label: 'Sticker', icon: Sticker, action: onSticker, color: 'text-[#0F766E]' },
+    { label: 'Spreadsheet', icon: Table2, action: onSpreadsheet, color: 'text-[#0F766E]' },
+    { label: 'Presentation', icon: Presentation, action: onPresentation, color: 'text-[#C026D3]' },
+    { label: 'Archive', icon: Archive, action: onArchive, color: 'text-[#64748B]' },
   ];
   return (
     <div className={cn('absolute bottom-12 left-0 z-40 w-56 rounded-lg border p-2 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
-      {items.map(({ label, icon: Icon, action, color }) => (
-        <button key={label} type="button" onClick={action} className={cn('flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+      {items.map(({ label, icon: Icon, action, color, disabled }) => (
+        <button key={label} type="button" disabled={disabled} title={disabled ? 'No camera detected' : undefined} onClick={action} className={cn('flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
           <Icon className={cn('h-4 w-4', color)} />
           {label}
         </button>
@@ -2807,7 +2847,7 @@ function SettingsModal({
               Details
               <textarea value={concernDetails} onChange={(event) => setConcernDetails(event.target.value)} placeholder="Include what you expected, what happened, and any steps that may help reproduce it." className={cn('min-h-40 resize-y rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
             </label>
-            <button disabled={!concernDetails.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Mail className="h-4 w-4" />Send email to owner</button>
+            <button disabled={!concernDetails.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Mail className="h-4 w-4" />Submit</button>
             <p className={cn('text-xs leading-5', muted(theme))}>Your default email app will open so you can review and send the message.</p>
             {reportError && <p className="text-sm font-semibold text-[#B91C1C]">{reportError}</p>}
           </form>
