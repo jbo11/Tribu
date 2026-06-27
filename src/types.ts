@@ -2,6 +2,7 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'guest';
 export type SpaceAccess = 'public' | 'private' | 'invite_only';
 export type ContentState = 'open' | 'read_only' | 'locked' | 'archived';
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'canceled';
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type SortMode = 'active' | 'newest' | 'assigned' | 'archived';
 export type ViewMode = 'feed' | 'tasks' | 'knowledge' | 'admin';
 export type KnowledgeCategory = 'documentation' | 'how_to' | 'faq' | 'best_practice' | 'troubleshooting' | 'sop';
@@ -118,6 +119,9 @@ export interface AppTask {
   post_id: string | null;
   title: string;
   description: string | null;
+  project_name?: string | null;
+  priority?: TaskPriority;
+  tags?: string[];
   assignee_id: string | null;
   created_by: string;
   status: TaskStatus;

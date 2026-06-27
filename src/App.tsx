@@ -5,16 +5,21 @@ import {
   Camera,
   CalendarDays,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   ClipboardList,
   Copy,
   Download,
   File as FileIcon,
   FileText,
+  Filter,
   Globe2,
   Headphones,
   Image as ImageIcon,
   Inbox,
+  LayoutGrid,
+  List,
   Loader2,
   LogOut,
   Mail,
@@ -58,6 +63,7 @@ import {
   KnowledgeCategory,
   SpaceAccess,
   SortMode,
+  TaskPriority,
   TaskStatus,
   ViewMode,
   WorkspaceRole,
@@ -183,7 +189,7 @@ export default function App() {
         .limit(80),
       supabase
         .from('tasks')
-        .select('id, workspace_id, post_id, title, description, assignee_id, created_by, status, due_at, archived_at, created_at, updated_at')
+        .select('id, workspace_id, post_id, title, description, project_name, priority, tags, assignee_id, created_by, status, due_at, archived_at, created_at, updated_at')
         .eq('workspace_id', targetWorkspaceId)
         .is('archived_at', null)
         .order('created_at', { ascending: false })
@@ -589,7 +595,7 @@ export default function App() {
           </header>
 
           <div
-            className="grid min-h-0 grid-cols-1 overflow-hidden xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]"
+            className={cn('grid min-h-0 grid-cols-1 overflow-hidden', view === 'feed' && 'xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]')}
             style={{ '--thread-width': `${threadWidth}%` } as CSSProperties}
           >
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
@@ -732,7 +738,7 @@ export default function App() {
               )}
             </section>
 
-            <ThreadPanel
+            {view === 'feed' && <ThreadPanel
               post={selectedPost}
               profile={selectedProfile}
               comments={comments}
@@ -785,7 +791,7 @@ export default function App() {
                 await forwardMessages(targets, sourceMessages, session.user.id);
                 await loadWorkspaceData(workspaceId, true);
               }}
-            />
+            />}
           </div>
         </main>
       </div>
@@ -840,9 +846,9 @@ export default function App() {
           theme={theme}
           profiles={memberProfiles}
           onClose={() => setTaskModalOpen(false)}
-          onCreate={async ({ title, description, assigneeId, dueAt }) => {
+          onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt }) => {
             if (!session.user) return;
-            await createTask(workspaceId, session.user.id, { title, description, assigneeId, dueAt });
+            await createTask(workspaceId, session.user.id, { title, description, projectName, priority, tags, assigneeId, dueAt });
             setTaskModalOpen(false);
             await loadWorkspaceData(workspaceId, true);
           }}
@@ -855,8 +861,8 @@ export default function App() {
           profiles={memberProfiles}
           task={editingTask}
           onClose={() => setEditingTask(null)}
-          onCreate={async ({ title, description, assigneeId, dueAt }) => {
-            await updateTask(editingTask.id, { title, description, assigneeId, dueAt });
+          onCreate={async ({ title, description, projectName, priority, tags, assigneeId, dueAt }) => {
+            await updateTask(editingTask.id, { title, description, projectName, priority, tags, assigneeId, dueAt });
             setEditingTask(null);
             await loadWorkspaceData(workspaceId, true);
           }}
@@ -1804,79 +1810,88 @@ function TasksView({
   onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>;
   onArchiveTask: (task: AppTask) => Promise<void>;
 }) {
-  if (tasks.length === 0) {
-    return <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create tasks for follow-ups, assignments, and camp work that should not get lost in posts." actionLabel="Create task" onAction={onCreateTask} />;
-  }
-
+  const [mode, setMode] = useState<'board' | 'list' | 'calendar'>('board');
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all');
+  const filteredTasks = tasks.filter((task) => {
+    if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+    if (priorityFilter !== 'all' && (task.priority ?? 'medium') !== priorityFilter) return false;
+    const normalizedQuery = query.trim().toLowerCase();
+    return !normalizedQuery || `${task.title} ${task.description ?? ''} ${task.project_name ?? ''} ${(task.tags ?? []).join(' ')}`.toLowerCase().includes(normalizedQuery);
+  });
+  const tabs: { value: typeof mode; label: string; icon: LucideIcon }[] = [
+    { value: 'board', label: 'Board', icon: LayoutGrid },
+    { value: 'list', label: 'List', icon: List },
+    { value: 'calendar', label: 'Calendar', icon: CalendarDays },
+  ];
   return (
     <StaticPanel theme={theme} title="Tasks" icon={ClipboardList}>
-      <div className="mb-4 flex justify-end">
-        <button onClick={onCreateTask} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white">
-          <Plus className="h-4 w-4" />
-          New task
-        </button>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className={cn('inline-flex rounded-lg border p-1', surface(theme))}>
+          {tabs.map(({ value, label, icon: Icon }) => <button key={value} onClick={() => setMode(value)} className={cn('inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition', mode === value ? 'bg-[#E9B93E] text-[#211A16] shadow-sm' : muted(theme))}><Icon className="h-4 w-4" />{label}</button>)}
+        </div>
+        <button onClick={onCreateTask} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New task</button>
       </div>
-      <div className="grid gap-3 overflow-y-auto pr-1 scroll-area">
-        {tasks.map((task) => (
-          <div key={task.id} className={cn('grid gap-4 rounded-lg border p-4 xl:grid-cols-[minmax(0,1fr)_180px_180px]', surface(theme))}>
-            <div className="min-w-0">
-              <p className="font-semibold">{task.title}</p>
-              {task.description && <p className={cn('mt-1 line-clamp-2 text-sm leading-6', muted(theme))}>{task.description}</p>}
-              {task.due_at && <p className={cn('mt-2 text-xs font-semibold', muted(theme))}>Due {new Date(task.due_at).toLocaleDateString()}</p>}
-            </div>
-            <div className="flex items-center gap-3">
-              <Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} />
-              <p className={cn('min-w-0 truncate text-sm', muted(theme))}>{task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p>
-            </div>
-            <div className="flex flex-col items-stretch gap-2 xl:items-end">
-              <select
-                value={task.status}
-                onChange={(event) => void onStatusChange(task.id, event.target.value as TaskStatus)}
-                className={cn('h-10 w-full rounded-lg border bg-transparent px-3 text-sm font-semibold capitalize outline-none xl:w-44', subtleButton(theme))}
-              >
-                <option value="todo">To do</option>
-                <option value="in_progress">In progress</option>
-                <option value="blocked">Blocked</option>
-                <option value="done">Done</option>
-                <option value="canceled">Canceled</option>
-              </select>
-              <div className="flex items-center gap-2 xl:justify-end">
-                {canManageTaskActions && <button
-                  type="button"
-                  aria-label="Edit task"
-                  title="Edit task"
-                  onClick={() => onEditTask(task)}
-                  className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>}
-                {canManageTaskActions && <button
-                  type="button"
-                  aria-label="Delete task"
-                  title="Delete task"
-                  onClick={() => void onDeleteTask(task)}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>}
-                {(task.status === 'done' || task.status === 'canceled') && (
-                  <button
-                    type="button"
-                    aria-label="Archive task"
-                    title="Archive task"
-                    onClick={() => void onArchiveTask(task)}
-                    className={cn('inline-flex h-10 w-10 items-center justify-center rounded-lg border', subtleButton(theme))}
-                  >
-                    <Archive className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {tasks.length === 0 ? <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create the first task to start planning camp projects." actionLabel="Create task" onAction={onCreateTask} /> : mode === 'board' ? (
+        <TaskBoard tasks={filteredTasks} profiles={profiles} theme={theme} onCreateTask={onCreateTask} onStatusChange={onStatusChange} />
+      ) : mode === 'list' ? (
+        <TaskList tasks={filteredTasks} profiles={profiles} theme={theme} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} priorityFilter={priorityFilter} setPriorityFilter={setPriorityFilter} canManageTaskActions={canManageTaskActions} onStatusChange={onStatusChange} onEditTask={onEditTask} onDeleteTask={onDeleteTask} onArchiveTask={onArchiveTask} />
+      ) : (
+        <TaskCalendar tasks={filteredTasks} profiles={profiles} theme={theme} />
+      )}
     </StaticPanel>
   );
+}
+
+const taskColumns: { status: TaskStatus; label: string; dot: string }[] = [
+  { status: 'todo', label: 'To do', dot: 'bg-[#94A3B8]' },
+  { status: 'in_progress', label: 'In progress', dot: 'bg-[#3B82F6]' },
+  { status: 'blocked', label: 'Blocked', dot: 'bg-[#F59E0B]' },
+  { status: 'done', label: 'Done', dot: 'bg-[#10B981]' },
+  { status: 'canceled', label: 'Canceled', dot: 'bg-[#EF4444]' },
+];
+
+function TaskBoard({ tasks, profiles, theme, onCreateTask, onStatusChange }: { tasks: AppTask[]; profiles: Record<string, AppProfile>; theme: 'light' | 'dark'; onCreateTask: () => void; onStatusChange: (taskId: string, status: TaskStatus) => Promise<void> }) {
+  return (
+    <div className="min-h-0 overflow-x-auto pb-3 scroll-area">
+      <div className="grid min-w-max grid-flow-col auto-cols-[280px] gap-4">
+        {taskColumns.map((column) => {
+          const columnTasks = tasks.filter((task) => task.status === column.status);
+          return <section key={column.status} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const taskId = event.dataTransfer.getData('text/tribu-task'); if (taskId) void onStatusChange(taskId, column.status); }}>
+            <div className="mb-3 flex items-center gap-2 px-1"><span className={cn('h-2.5 w-2.5 rounded-full', column.dot)} /><h3 className="text-sm font-bold">{column.label}</h3><span className={cn('ml-auto rounded-full px-2 py-0.5 text-xs', theme === 'dark' ? 'bg-white/10' : 'bg-[#EDF2F7]', muted(theme))}>{columnTasks.length}</span></div>
+            <div className="space-y-3">
+              {columnTasks.map((task) => <div key={task.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/tribu-task', task.id); }} className={cn('cursor-grab rounded-lg border p-4 shadow-sm active:cursor-grabbing', surface(theme))}>
+                <p className="font-semibold">{task.title}</p>{task.description && <p className={cn('mt-1 line-clamp-2 text-xs leading-5', muted(theme))}>{task.description}</p>}
+                <div className="mt-3 flex flex-wrap gap-1.5"><PriorityPill priority={task.priority ?? 'medium'} />{(task.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className={cn('rounded-full px-2 py-1 text-[11px]', theme === 'dark' ? 'bg-white/10' : 'bg-[#EDF2F7]')}>{tag}</span>)}</div>
+                <div className="mt-4 flex items-center gap-2"><Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} /><span className={cn('min-w-0 flex-1 truncate text-xs', muted(theme))}>{task.project_name || 'General project'}</span>{task.due_at && <span className={cn('text-[11px]', muted(theme))}>{formatTaskDate(task.due_at)}</span>}</div>
+              </div>)}
+              <button onClick={onCreateTask} className={cn('inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-dashed text-sm', muted(theme))}><Plus className="h-4 w-4" />Add task</button>
+            </div>
+          </section>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TaskList({ tasks, profiles, theme, query, setQuery, statusFilter, setStatusFilter, priorityFilter, setPriorityFilter, canManageTaskActions, onStatusChange, onEditTask, onDeleteTask, onArchiveTask }: { tasks: AppTask[]; profiles: Record<string, AppProfile>; theme: 'light' | 'dark'; query: string; setQuery: (value: string) => void; statusFilter: TaskStatus | 'all'; setStatusFilter: (value: TaskStatus | 'all') => void; priorityFilter: TaskPriority | 'all'; setPriorityFilter: (value: TaskPriority | 'all') => void; canManageTaskActions: boolean; onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>; onEditTask: (task: AppTask) => void; onDeleteTask: (task: AppTask) => Promise<void>; onArchiveTask: (task: AppTask) => Promise<void> }) {
+  return <div><div className="mb-4 flex flex-wrap items-center gap-2"><Filter className={cn('h-4 w-4', muted(theme))} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | 'all')} className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm outline-none', subtleButton(theme))}><option value="all">All statuses</option>{taskColumns.map((column) => <option key={column.status} value={column.status}>{column.label}</option>)}</select><select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as TaskPriority | 'all')} className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm outline-none', subtleButton(theme))}><option value="all">All priorities</option><option value="urgent">Urgent</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select><label className={cn('ml-auto flex h-10 min-w-56 items-center gap-2 rounded-lg border px-3', surface(theme))}><Search className="h-4 w-4" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks" className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label></div>
+    <div className={cn('overflow-x-auto rounded-lg border', surface(theme))}><table className="w-full min-w-[900px] border-collapse text-left"><thead><tr className="border-b border-inherit">{['Task', 'Project', 'Assignee', 'Status', 'Priority', 'Due date', 'Actions'].map((heading) => <th key={heading} className={cn('px-4 py-3 text-xs uppercase tracking-[0.12em]', muted(theme))}>{heading}</th>)}</tr></thead><tbody>{tasks.map((task) => <tr key={task.id} className="border-b border-inherit last:border-0"><td className="px-4 py-3"><p className="text-sm font-semibold">{task.title}</p><p className={cn('max-w-64 truncate text-xs', muted(theme))}>{task.description}</p></td><td className={cn('px-4 py-3 text-sm', muted(theme))}>{task.project_name || 'General'}</td><td className="px-4 py-3"><div className="flex items-center gap-2"><Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} /><span className="text-sm">{task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</span></div></td><td className="px-4 py-3"><select aria-label={`Status for ${task.title}`} value={task.status} onChange={(event) => void onStatusChange(task.id, event.target.value as TaskStatus)} className={cn('h-9 rounded-lg border bg-transparent px-2 text-xs font-semibold outline-none', subtleButton(theme))}>{taskColumns.map((column) => <option key={column.status} value={column.status}>{column.label}</option>)}</select></td><td className="px-4 py-3"><PriorityPill priority={task.priority ?? 'medium'} /></td><td className={cn('px-4 py-3 text-sm', muted(theme))}>{task.due_at ? formatTaskDate(task.due_at) : 'No date'}</td><td className="px-4 py-3"><div className="flex gap-2">{canManageTaskActions && <button aria-label="Edit task" title="Edit task" onClick={() => onEditTask(task)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border', subtleButton(theme))}><Pencil className="h-3.5 w-3.5" /></button>}{canManageTaskActions && <button aria-label="Delete task" title="Delete task" onClick={() => void onDeleteTask(task)} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#FCA5A5] text-[#B91C1C]"><Trash2 className="h-3.5 w-3.5" /></button>}{(task.status === 'done' || task.status === 'canceled') && <button aria-label="Archive task" title="Archive task" onClick={() => void onArchiveTask(task)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border', subtleButton(theme))}><Archive className="h-3.5 w-3.5" /></button>}</div></td></tr>)}</tbody></table>{tasks.length === 0 && <p className={cn('p-8 text-center text-sm', muted(theme))}>No tasks match these filters.</p>}</div>
+  </div>;
+}
+
+function TaskCalendar({ tasks, profiles, theme }: { tasks: AppTask[]; profiles: Record<string, AppProfile>; theme: 'light' | 'dark' }) {
+  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()));
+  const days = buildCalendarDays(month);
+  const selectedTasks = tasks.filter((task) => task.due_at && toTaskDateKey(task.due_at) === selectedDate);
+  return <div><div className="mb-4 flex items-center justify-between"><button aria-label="Previous month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><ChevronLeft className="h-4 w-4" /></button><h3 className="font-bold">{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3><button aria-label="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><ChevronRight className="h-4 w-4" /></button></div><div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.7fr)]"><div className={cn('overflow-hidden rounded-lg border', surface(theme))}><div className="grid grid-cols-7 border-b border-inherit">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day) => <div key={day} className={cn('p-2 text-center text-xs font-semibold', muted(theme))}>{day}</div>)}</div><div className="grid grid-cols-7">{days.map((day) => { const key = toDateKey(day); const dayTasks = tasks.filter((task) => task.due_at && toTaskDateKey(task.due_at) === key); const inMonth = day.getMonth() === month.getMonth(); return <button key={key} onClick={() => setSelectedDate(key)} className={cn('relative min-h-24 border-b border-r border-inherit p-2 text-left align-top transition', !inMonth && 'opacity-40', selectedDate === key && 'ring-2 ring-inset ring-[#E9B93E]')}><span className="text-xs font-semibold">{day.getDate()}</span><div className="mt-2 space-y-1">{dayTasks.slice(0, 2).map((task) => <span key={task.id} className="block truncate rounded bg-[#FFF3C4] px-1.5 py-1 text-[10px] text-[#8F4F2E]">{task.title}</span>)}{dayTasks.length > 2 && <span className={cn('text-[10px]', muted(theme))}>+{dayTasks.length - 2} more</span>}</div></button>; })}</div></div><aside className={cn('rounded-lg border p-4', surface(theme))}><h3 className="font-bold">{new Date(`${selectedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3><p className={cn('mt-1 text-xs', muted(theme))}>{selectedTasks.length} task{selectedTasks.length === 1 ? '' : 's'}</p><div className="mt-4 space-y-3">{selectedTasks.map((task) => <div key={task.id} className="border-l-2 border-[#E9B93E] pl-3"><p className="text-sm font-semibold">{task.title}</p><p className={cn('text-xs', muted(theme))}>{task.project_name || 'General'} · {task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p></div>)}{selectedTasks.length === 0 && <p className={cn('py-10 text-center text-sm', muted(theme))}>No tasks for this date.</p>}</div></aside></div></div>;
+}
+
+function PriorityPill({ priority }: { priority: TaskPriority }) {
+  const styles: Record<TaskPriority, string> = { low: 'bg-[#EDF2F7] text-[#475569]', medium: 'bg-[#DBEAFE] text-[#1D4ED8]', high: 'bg-[#FEF3C7] text-[#B45309]', urgent: 'bg-[#FEE2E2] text-[#B91C1C]' };
+  return <span className={cn('rounded-full px-2 py-1 text-[11px] font-semibold capitalize', styles[priority])}>{priority}</span>;
 }
 
 function KnowledgeView({
@@ -2290,10 +2305,13 @@ function TaskModal({
   profiles: AppProfile[];
   task?: AppTask;
   onClose: () => void;
-  onCreate: (input: { title: string; description: string; assigneeId: string; dueAt: string }) => Promise<void>;
+  onCreate: (input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string }) => Promise<void>;
 }) {
   const [title, setTitle] = useState(task?.title ?? '');
   const [description, setDescription] = useState(task?.description ?? '');
+  const [projectName, setProjectName] = useState(task?.project_name ?? '');
+  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? 'medium');
+  const [tags, setTags] = useState((task?.tags ?? []).join(', '));
   const [assigneeId, setAssigneeId] = useState(task?.assignee_id ?? '');
   const [dueAt, setDueAt] = useState(task?.due_at ? task.due_at.slice(0, 10) : '');
   const [submitting, setSubmitting] = useState(false);
@@ -2309,7 +2327,7 @@ function TaskModal({
           setSubmitting(true);
           setError('');
           try {
-            await onCreate({ title: title.trim(), description: description.trim(), assigneeId, dueAt });
+            await onCreate({ title: title.trim(), description: description.trim(), projectName: projectName.trim(), priority, tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8), assigneeId, dueAt });
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -2325,6 +2343,11 @@ function TaskModal({
           Description
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} className={cn('h-28 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
         </label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-2 text-sm font-semibold">Project<input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="e.g. Website redesign" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
+          <label className="grid gap-2 text-sm font-semibold">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+        </div>
+        <label className="grid gap-2 text-sm font-semibold">Tags<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="design, onboarding, client" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /><span className={cn('text-xs font-normal', muted(theme))}>Separate tags with commas.</span></label>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm font-semibold">
             Assignee
@@ -3119,13 +3142,16 @@ async function uploadAvatar(userId: string, file: File) {
 async function createTask(
   workspaceId: string,
   userId: string,
-  input: { title: string; description: string; assigneeId: string; dueAt: string },
+  input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string },
 ) {
   if (!supabase) return;
   const { error } = await supabase.from('tasks').insert({
     workspace_id: workspaceId,
     title: input.title,
     description: input.description || null,
+    project_name: input.projectName || null,
+    priority: input.priority,
+    tags: input.tags,
     assignee_id: input.assigneeId || null,
     created_by: userId,
     status: 'todo',
@@ -3136,7 +3162,7 @@ async function createTask(
 
 async function updateTask(
   taskId: string,
-  input: { title: string; description: string; assigneeId: string; dueAt: string },
+  input: { title: string; description: string; projectName: string; priority: TaskPriority; tags: string[]; assigneeId: string; dueAt: string },
 ) {
   if (!supabase) return;
   const { data, error } = await supabase
@@ -3144,6 +3170,9 @@ async function updateTask(
     .update({
       title: input.title,
       description: input.description || null,
+      project_name: input.projectName || null,
+      priority: input.priority,
+      tags: input.tags,
       assignee_id: input.assigneeId || null,
       due_at: input.dueAt || null,
     })
@@ -3282,6 +3311,32 @@ function formatFileSize(bytes: number) {
 
 function formatMessageTime(timestamp: string) {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+}
+
+function formatTaskDate(value: string) {
+  return new Date(`${toTaskDateKey(value)}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function toTaskDateKey(value: string) {
+  return value.slice(0, 10);
+}
+
+function toDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildCalendarDays(month: Date) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return day;
+  });
 }
 
 function groupReactions(reactions: AppReaction[]) {
