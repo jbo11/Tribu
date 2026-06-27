@@ -111,7 +111,7 @@ interface ForwardableMessage {
   attachments: AppAttachment[];
 }
 
-type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'about';
+type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'about' | 'report';
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
@@ -157,6 +157,7 @@ export default function App() {
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
   const currentProfile = session?.user.id ? profiles[session.user.id] : undefined;
+  const ownerEmail = profiles[memberships.find((membership) => membership.role === 'owner')?.user_id ?? '']?.email ?? '';
   const memberProfiles = useMemo(
     () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
     [profiles],
@@ -169,6 +170,16 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOnOtherPages));
   }, [chatOnOtherPages]);
+
+  useEffect(() => {
+    const toggleDiscussionPanel = (event: KeyboardEvent) => {
+      if (event.key !== '\\' || (!event.metaKey && !event.ctrlKey)) return;
+      event.preventDefault();
+      setChatOpen((open) => !open);
+    };
+    window.addEventListener('keydown', toggleDiscussionPanel);
+    return () => window.removeEventListener('keydown', toggleDiscussionPanel);
+  }, []);
 
   const visiblePosts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -560,7 +571,7 @@ export default function App() {
           view={view}
           onViewChange={(nextView) => {
             setView(nextView);
-            setChatOpen(nextView === 'feed' ? true : chatOnOtherPages);
+            if (nextView !== 'feed') setChatOpen(chatOnOtherPages);
             setSidebarOpen(false);
           }}
           workspaces={workspaces}
@@ -936,13 +947,15 @@ export default function App() {
           chatOpen={chatOnOtherPages}
           setChatOpen={(open) => {
             setChatOnOtherPages(open);
-            if (view !== 'feed') setChatOpen(open);
+            if (open || view !== 'feed') setChatOpen(open);
           }}
           profile={currentProfile}
           email={session.user.email ?? ''}
           workspace={selectedWorkspace}
           role={currentRole}
+          ownerEmail={ownerEmail}
           onClose={() => setAccountModal(null)}
+          onOpenSection={setAccountModal}
           onSaveProfile={async (input) => {
             if (!session.user) return;
             await updateProfile(session.user.id, input);
@@ -1125,16 +1138,12 @@ function Sidebar({
                       <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
                         <AccountMenuButton icon={Info} label="About Tribu" onClick={() => openAccountView('about')} />
-                        <a href="https://github.com/jbo11/Tribu/issues/new" target="_blank" rel="noreferrer" className="flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition hover:bg-white/10">
-                          <Bug className="h-4 w-4" /> Report a problem
-                        </a>
+                        <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
                       <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#2A2421] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
                         <AccountMenuButton icon={Info} label="About Tribu" onClick={() => openAccountView('about')} />
-                        <a href="https://github.com/jbo11/Tribu/issues/new" target="_blank" rel="noreferrer" className="flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition hover:bg-white/10">
-                          <Bug className="h-4 w-4" /> Report a problem
-                        </a>
+                        <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
                     </>
                   )}
@@ -1636,6 +1645,7 @@ function ThreadPanel({
 function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const [actionError, setActionError] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -1694,11 +1704,31 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
         ))}
         <div ref={menuRef} className="relative ml-auto flex items-center gap-1">
           <span className={cn('text-[11px]', muted(theme))}>{formatMessageTime(timestamp)}</span>
-          <button type="button" aria-label="Message actions" title="Message actions" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+          <button
+            type="button"
+            aria-label="Message actions"
+            title="Message actions"
+            aria-expanded={menuOpen}
+            onClick={(event) => {
+              if (menuOpen) {
+                setMenuOpen(false);
+                return;
+              }
+              const rect = event.currentTarget.getBoundingClientRect();
+              const menuHeight = onDelete ? 210 : 170;
+              const top = rect.bottom + 8 + menuHeight <= window.innerHeight ? rect.bottom + 8 : rect.top - menuHeight - 8;
+              setMenuPosition({
+                top: Math.max(8, top),
+                left: Math.min(window.innerWidth - 200, Math.max(8, rect.right - 192)),
+              });
+              setMenuOpen(true);
+            }}
+            className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}
+          >
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
           {menuOpen && (
-            <div className={cn('absolute bottom-8 right-0 z-30 w-48 rounded-lg border p-1.5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+            <div style={menuPosition} className={cn('fixed z-[90] w-48 rounded-lg border p-1.5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
               <MessageMenuButton icon={ReplyIcon} label="Reply" onClick={() => { onReply(); setMenuOpen(false); }} />
               <MessageMenuButton icon={Copy} label="Copy" onClick={() => { void navigator.clipboard.writeText(body); setMenuOpen(false); }} />
               <MessageMenuButton icon={Smile} label="React" onClick={() => { setReactionPickerOpen(true); setMenuOpen(false); }} />
@@ -2206,6 +2236,7 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<WorkspaceRole>('member');
   const [inviteLink, setInviteLink] = useState('');
+  const [sentTo, setSentTo] = useState('');
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -2229,9 +2260,12 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
           setSubmitting(true);
           setError('');
           setCopied(false);
+          setSentTo('');
           try {
-            const link = await onInvite(email.trim(), role);
+            const inviteeEmail = email.trim();
+            const link = await onInvite(inviteeEmail, role);
             setInviteLink(link);
+            setSentTo(inviteeEmail);
           } catch (caughtError) {
             setError(getErrorMessage(caughtError));
           } finally {
@@ -2258,7 +2292,8 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
       </form>
       {inviteLink && (
         <div className={cn('mt-4 rounded-lg border p-3 text-sm', subtleButton(theme))}>
-          <p className="mb-2 font-semibold">Invite link</p>
+          <p className="font-semibold text-[#0F766E]">Invitation emailed to {sentTo}.</p>
+          <p className={cn('mb-2 mt-1 text-xs', muted(theme))}>Keep this backup link in case their email provider delays delivery.</p>
           <div className="flex gap-2">
             <input readOnly value={inviteLink} className="min-w-0 flex-1 bg-transparent outline-none" />
             <button
@@ -2525,7 +2560,9 @@ function SettingsModal({
   email,
   workspace,
   role,
+  ownerEmail,
   onClose,
+  onOpenSection,
   onSaveProfile,
   onUploadAvatar,
 }: {
@@ -2538,7 +2575,9 @@ function SettingsModal({
   email: string;
   workspace?: AppWorkspace;
   role?: WorkspaceRole;
+  ownerEmail: string;
   onClose: () => void;
+  onOpenSection: (section: AccountModalView) => void;
   onSaveProfile: (input: { fullName: string; nickname: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string }) => Promise<void>;
   onUploadAvatar: (file: File) => Promise<string>;
 }) {
@@ -2553,6 +2592,9 @@ function SettingsModal({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [concernType, setConcernType] = useState('Technical issue');
+  const [concernDetails, setConcernDetails] = useState('');
+  const [reportError, setReportError] = useState('');
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const modalTitles: Record<AccountModalView, string> = {
     personalization: 'Personalization',
@@ -2560,6 +2602,7 @@ function SettingsModal({
     settings: 'Settings',
     help: 'Help center',
     about: 'About Tribu',
+    report: 'Report a problem',
   };
 
   return (
@@ -2688,7 +2731,7 @@ function SettingsModal({
           <div className="mt-5 border-t border-inherit pt-4">
             <p className="font-bold">Workspace layout</p>
             <label className="mt-3 flex items-center justify-between gap-4 text-sm">
-              <span><span className="block font-semibold">Discussion side panel</span><span className={cn('mt-1 block text-xs', muted(theme))}>Show chat on Tasks, Knowledge, and Admin. Active Feed always includes it.</span></span>
+              <span><span className="block font-semibold">Discussion side panel</span><span className={cn('mt-1 block text-xs', muted(theme))}>Show chat on Tasks, Knowledge, and Admin. Toggle it anytime with Ctrl/⌘ + \.</span></span>
               <input type="checkbox" checked={chatOpen} onChange={(event) => setChatOpen(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
             </label>
           </div>
@@ -2719,7 +2762,8 @@ function SettingsModal({
             <HelpTopic title="Plan work in Tasks" body="Use Board, List, or Calendar. Drag cards between stages, set priorities and due dates, and archive completed work." theme={theme} />
             <HelpTopic title="Build shared knowledge" body="Publish how-to guides, FAQs, troubleshooting notes, and standard procedures so your camp can find answers quickly." theme={theme} />
             <HelpTopic title="Manage access" body="Chiefs and Admins can invite people and manage roles from Admin. Members and Guests only see the areas permitted for their role." theme={theme} />
-            <a href="https://github.com/jbo11/Tribu/issues/new" target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Bug className="h-4 w-4" />Report a problem</a>
+            <HelpTopic title="Keyboard shortcut" body="Press Ctrl + \\ on Windows or Linux, or ⌘ + \\ on macOS, to hide or show the discussion panel." theme={theme} />
+            <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Bug className="h-4 w-4" />Report a problem</button>
           </div>
         )}
 
@@ -2729,6 +2773,44 @@ function SettingsModal({
             <p className={cn('mt-5 text-sm leading-7', muted(theme))}>Tribu brings conversations, project work, shared knowledge, and camp administration into one focused workspace.</p>
             <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'Free'}</p></div>
           </section>
+        )}
+
+        {section === 'report' && (
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setReportError('');
+              if (!ownerEmail) {
+                setReportError('The Camp owner email is not available. Ask a Chief or Admin for support.');
+                return;
+              }
+              if (!concernDetails.trim()) return;
+              const subject = `[Tribu] ${concernType}`;
+              const body = [`Camp: ${workspace?.name ?? 'Tribu'}`, `From: ${email}`, `Concern: ${concernType}`, '', concernDetails.trim()].join('\n');
+              window.location.href = `mailto:${encodeURIComponent(ownerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            }}
+          >
+            <p className={cn('text-sm leading-6', muted(theme))}>Describe what happened and Tribu will prepare an email addressed to your Camp owner.</p>
+            <label className="grid gap-2 text-sm font-semibold">
+              Type of concern
+              <select value={concernType} onChange={(event) => setConcernType(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
+                <option>Technical issue</option>
+                <option>Account or access</option>
+                <option>Privacy or safety</option>
+                <option>Billing or plan</option>
+                <option>Feature request</option>
+                <option>Other</option>
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              Details
+              <textarea value={concernDetails} onChange={(event) => setConcernDetails(event.target.value)} placeholder="Include what you expected, what happened, and any steps that may help reproduce it." className={cn('min-h-40 resize-y rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
+            </label>
+            <button disabled={!concernDetails.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Mail className="h-4 w-4" />Send email to owner</button>
+            <p className={cn('text-xs leading-5', muted(theme))}>Your default email app will open so you can review and send the message.</p>
+            {reportError && <p className="text-sm font-semibold text-[#B91C1C]">{reportError}</p>}
+          </form>
         )}
       </div>
     </ModalShell>
@@ -3506,6 +3588,14 @@ async function createWorkspaceInvitation(workspaceId: string, email: string, rol
 
   const url = new URL(window.location.origin);
   url.searchParams.set('invite', String(data));
+  const { error: emailError } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: url.toString(),
+      shouldCreateUser: true,
+    },
+  });
+  if (emailError) throw new Error(`The invitation was created, but the email could not be sent: ${emailError.message}`);
   return url.toString();
 }
 
