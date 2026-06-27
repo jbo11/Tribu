@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArchiveRestore,
@@ -81,6 +81,12 @@ const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
 const PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone, phone, address, bio';
 const linkPreviewCache = new Map<string, AppLinkPreview>();
 const THREAD_WIDTH_STORAGE_KEY = 'tribu_thread_width';
+const EmojiPicker = lazy(() => import('emoji-picker-react'));
+
+interface ForwardableMessage {
+  body: string;
+  attachments: AppAttachment[];
+}
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -336,7 +342,7 @@ export default function App() {
       return;
     }
 
-    const [commentResult, attachmentResult, reactionResult] = await Promise.all([
+    const [commentResult, attachmentResult] = await Promise.all([
       supabase
         .from('comments')
         .select('id, workspace_id, post_id, parent_comment_id, author_id, body, is_decision, created_at, updated_at')
@@ -347,19 +353,28 @@ export default function App() {
         .select('id, workspace_id, post_id, comment_id, uploaded_by, bucket, object_path, filename, mime_type, byte_size, created_at')
         .eq('post_id', postId)
         .order('created_at', { ascending: true }),
-      supabase
-        .from('reactions')
-        .select('id, workspace_id, post_id, comment_id, user_id, emoji, created_at')
-        .eq('post_id', postId)
-        .order('created_at', { ascending: true }),
     ]);
 
-    if (commentResult.error || attachmentResult.error || reactionResult.error) {
-      setNotice(commentResult.error?.message ?? attachmentResult.error?.message ?? reactionResult.error?.message ?? 'Messages could not be loaded.');
+    if (commentResult.error || attachmentResult.error) {
+      setNotice(commentResult.error?.message ?? attachmentResult.error?.message ?? 'Messages could not be loaded.');
       return;
     }
 
     const nextComments = (commentResult.data ?? []) as AppComment[];
+    const commentIds = nextComments.map((comment) => comment.id);
+    const reactionFilter = commentIds.length > 0
+      ? `post_id.eq.${postId},comment_id.in.(${commentIds.join(',')})`
+      : `post_id.eq.${postId}`;
+    const reactionResult = await supabase
+      .from('reactions')
+      .select('id, workspace_id, post_id, comment_id, user_id, emoji, created_at')
+      .or(reactionFilter)
+      .order('created_at', { ascending: true });
+    if (reactionResult.error) {
+      setNotice(reactionResult.error.message);
+      return;
+    }
+
     setComments(nextComments);
     const nextAttachments = await Promise.all(
       ((attachmentResult.data ?? []) as AppAttachment[]).map(async (attachment) => {
@@ -699,6 +714,7 @@ export default function App() {
               comments={comments}
               attachments={attachments}
               reactions={reactions}
+              recentPosts={posts.filter((item) => item.state === 'open' && item.id !== selectedPost?.id)}
               profiles={profiles}
               theme={theme}
               currentUserId={session.user.id}
@@ -724,6 +740,26 @@ export default function App() {
                 if (!selectedPost) return;
                 await deleteComment(commentId);
                 await loadComments(selectedPost.id);
+              }}
+              onForward={async (messageIds, targetPostIds) => {
+                if (!selectedPost || !session.user) return;
+                const sourceMessages = messageIds.map((messageId) => {
+                  if (messageId === selectedPost.id) {
+                    return {
+                      body: selectedPost.body,
+                      attachments: attachments.filter((attachment) => !attachment.comment_id),
+                    };
+                  }
+                  const comment = comments.find((item) => item.id === messageId);
+                  if (!comment) return null;
+                  return {
+                    body: comment.body,
+                    attachments: attachments.filter((attachment) => attachment.comment_id === comment.id),
+                  };
+                }).filter((message): message is ForwardableMessage => Boolean(message));
+                const targets = posts.filter((item) => targetPostIds.includes(item.id));
+                await forwardMessages(targets, sourceMessages, session.user.id);
+                await loadWorkspaceData(workspaceId, true);
               }}
             />
           </div>
@@ -1117,6 +1153,7 @@ function ThreadPanel({
   comments,
   attachments,
   reactions,
+  recentPosts,
   profiles,
   theme,
   currentUserId,
@@ -1126,12 +1163,14 @@ function ThreadPanel({
   onReply,
   onReact,
   onDeleteComment,
+  onForward,
 }: {
   post?: AppPost;
   profile?: AppProfile;
   comments: AppComment[];
   attachments: AppAttachment[];
   reactions: AppReaction[];
+  recentPosts: AppPost[];
   profiles: Record<string, AppProfile>;
   theme: 'light' | 'dark';
   currentUserId: string;
@@ -1141,6 +1180,7 @@ function ThreadPanel({
   onReply: (body: string, isInsight: boolean, files: File[], parentCommentId: string | null) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
+  onForward: (messageIds: string[], targetPostIds: string[]) => Promise<void>;
 }) {
   const [reply, setReply] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -1150,6 +1190,9 @@ function ThreadPanel({
   const [dragActive, setDragActive] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<AppComment | null>(null);
+  const [forwarding, setForwarding] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+  const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1158,6 +1201,12 @@ function ThreadPanel({
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [post?.id, comments.length, attachments.length, reactions.length]);
+
+  useEffect(() => {
+    setForwarding(false);
+    setForwardModalOpen(false);
+    setSelectedMessageIds(new Set());
+  }, [post?.id]);
 
   useEffect(() => {
     if (!attachmentMenuOpen) return;
@@ -1183,6 +1232,20 @@ function ThreadPanel({
     input.click();
   };
 
+  const beginForward = (messageId: string) => {
+    setForwarding(true);
+    setSelectedMessageIds(new Set([messageId]));
+  };
+
+  const toggleForwardSelection = (messageId: string) => {
+    setSelectedMessageIds((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  };
+
   if (!post) {
     return (
       <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
@@ -1205,46 +1268,64 @@ function ThreadPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-5 scroll-area">
-        <ThreadCard
-          profile={profile}
-          body={post.body}
-          timestamp={post.created_at}
-          theme={theme}
-          workspaceId={post.workspace_id}
-          reactions={reactions.filter((reaction) => reaction.post_id === post.id && !reaction.comment_id)}
-          currentUserId={currentUserId}
-          onReply={() => { setReplyingTo(null); textareaRef.current?.focus(); }}
-          onReact={(emoji) => onReact(null, emoji)}
-        />
+        <div className="flex items-start gap-2">
+          {forwarding && <MessageSelectionCheckbox checked={selectedMessageIds.has(post.id)} onChange={() => toggleForwardSelection(post.id)} />}
+          <div className="min-w-0 flex-1">
+            <ThreadCard
+              profile={profile}
+              body={post.body}
+              timestamp={post.created_at}
+              theme={theme}
+              workspaceId={post.workspace_id}
+              reactions={reactions.filter((reaction) => reaction.post_id === post.id && !reaction.comment_id)}
+              currentUserId={currentUserId}
+              onReply={() => { setReplyingTo(null); textareaRef.current?.focus(); }}
+              onReact={(emoji) => onReact(null, emoji)}
+              onForward={() => beginForward(post.id)}
+            />
+          </div>
+        </div>
         <div className="mt-4 space-y-3">
           {comments.map((comment) => (
-            <div key={comment.id}>
-              <ThreadCard
-                profile={profiles[comment.author_id]}
-                body={comment.body}
-                timestamp={comment.created_at}
-                theme={theme}
-                isInsight={comment.is_decision}
-                attachments={attachments.filter((attachment) => attachment.comment_id === comment.id)}
-                workspaceId={comment.workspace_id}
-                reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
-                currentUserId={currentUserId}
-                parentComment={comments.find((item) => item.id === comment.parent_comment_id)}
-                onReply={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
-                onReact={(emoji) => onReact(comment.id, emoji)}
-                onDelete={comment.author_id === currentUserId || canManage ? async () => {
-                  if (!window.confirm('Delete this message?')) return;
-                  await onDeleteComment(comment.id);
-                } : undefined}
-              />
+            <div key={comment.id} className="flex items-start gap-2">
+              {forwarding && <MessageSelectionCheckbox checked={selectedMessageIds.has(comment.id)} onChange={() => toggleForwardSelection(comment.id)} />}
+              <div className="min-w-0 flex-1">
+                <ThreadCard
+                  profile={profiles[comment.author_id]}
+                  body={comment.body}
+                  timestamp={comment.created_at}
+                  theme={theme}
+                  isInsight={comment.is_decision}
+                  attachments={attachments.filter((attachment) => attachment.comment_id === comment.id)}
+                  workspaceId={comment.workspace_id}
+                  reactions={reactions.filter((reaction) => reaction.comment_id === comment.id)}
+                  currentUserId={currentUserId}
+                  parentComment={comments.find((item) => item.id === comment.parent_comment_id)}
+                  onReply={() => { setReplyingTo(comment); textareaRef.current?.focus(); }}
+                  onReact={(emoji) => onReact(comment.id, emoji)}
+                  onForward={() => beginForward(comment.id)}
+                  onDelete={comment.author_id === currentUserId || canManage ? async () => {
+                    if (!window.confirm('Delete this message?')) return;
+                    await onDeleteComment(comment.id);
+                  } : undefined}
+                />
+              </div>
             </div>
           ))}
           <div ref={latestMessageRef} />
         </div>
       </div>
 
+      {forwarding && (
+        <div className={cn('flex shrink-0 items-center gap-3 border-t p-4', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}>
+          <button type="button" onClick={() => { setForwarding(false); setSelectedMessageIds(new Set()); }} className={cn('h-10 rounded-lg border px-3 text-sm font-semibold', subtleButton(theme))}>Cancel</button>
+          <span className={cn('text-sm', muted(theme))}>{selectedMessageIds.size} selected</span>
+          <button type="button" disabled={selectedMessageIds.size === 0} onClick={() => setForwardModalOpen(true)} className="ml-auto inline-flex h-10 items-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:opacity-50"><Share2 className="h-4 w-4" />Forward</button>
+        </div>
+      )}
+
       <form
-        className={cn('shrink-0 border-t p-4', dragActive && 'ring-2 ring-inset ring-[#E9B93E]', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}
+        className={cn('shrink-0 border-t p-4', forwarding && 'hidden', dragActive && 'ring-2 ring-inset ring-[#E9B93E]', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}
         onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragLeave={(event) => { event.preventDefault(); if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
@@ -1349,11 +1430,25 @@ function ThreadPanel({
           </button>
         </div>
       </form>
+      {forwardModalOpen && (
+        <ForwardMessagesModal
+          theme={theme}
+          posts={recentPosts}
+          messageCount={selectedMessageIds.size}
+          onClose={() => setForwardModalOpen(false)}
+          onForward={async (targetPostIds) => {
+            await onForward([...selectedMessageIds], targetPostIds);
+            setForwardModalOpen(false);
+            setForwarding(false);
+            setSelectedMessageIds(new Set());
+          }}
+        />
+      )}
     </aside>
   );
 }
 
-function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; isInsight?: boolean; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onDelete?: () => Promise<void> }) {
+function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, attachments = [], reactions, currentUserId, parentComment, onReply, onReact, onForward, onDelete }: { profile?: AppProfile; body: string; timestamp: string; theme: 'light' | 'dark'; workspaceId: string; isInsight?: boolean; attachments?: AppAttachment[]; reactions: AppReaction[]; currentUserId: string; parentComment?: AppComment; onReply: () => void; onReact: (emoji: string) => Promise<void>; onForward: () => void; onDelete?: () => Promise<void> }) {
   const urls = extractUrls(body);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
@@ -1420,24 +1515,38 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, isInsight, a
           </button>
           {menuOpen && (
             <div className={cn('absolute bottom-8 right-0 z-30 w-48 rounded-lg border p-1.5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
-              {reactionPickerOpen && (
-                <div className="mb-1 flex items-center justify-between border-b border-inherit p-1.5">
-                  {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => <button key={emoji} type="button" onClick={() => { void runAction(() => onReact(emoji)); setMenuOpen(false); }} className="h-7 w-7 rounded-md text-base hover:bg-black/5">{emoji}</button>)}
-                </div>
-              )}
               <MessageMenuButton icon={ReplyIcon} label="Reply" onClick={() => { onReply(); setMenuOpen(false); }} />
               <MessageMenuButton icon={Copy} label="Copy" onClick={() => { void navigator.clipboard.writeText(body); setMenuOpen(false); }} />
-              <MessageMenuButton icon={Smile} label="React" onClick={() => setReactionPickerOpen((open) => !open)} />
-              <MessageMenuButton icon={Share2} label="Forward" onClick={() => {
-                if (navigator.share) void navigator.share({ text: body });
-                else void navigator.clipboard.writeText(body);
-                setMenuOpen(false);
-              }} />
+              <MessageMenuButton icon={Smile} label="React" onClick={() => { setReactionPickerOpen(true); setMenuOpen(false); }} />
+              <MessageMenuButton icon={Share2} label="Forward" onClick={() => { onForward(); setMenuOpen(false); }} />
               {onDelete && <MessageMenuButton icon={Trash2} label="Delete" danger onClick={() => { void runAction(onDelete); setMenuOpen(false); }} />}
             </div>
           )}
         </div>
       </div>
+      {reactionPickerOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 p-4" onClick={() => setReactionPickerOpen(false)}>
+          <div className={cn('w-full max-w-sm overflow-hidden rounded-lg border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')} onClick={(event) => event.stopPropagation()}>
+            <div className="flex h-12 items-center justify-between border-b border-inherit px-4">
+              <span className="text-sm font-bold">Choose a reaction</span>
+              <button type="button" aria-label="Close emoji picker" title="Close" onClick={() => setReactionPickerOpen(false)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}><X className="h-4 w-4" /></button>
+            </div>
+            <Suspense fallback={<div className="flex h-96 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>}>
+              <EmojiPicker
+                width="100%"
+                height={420}
+                theme={theme}
+                lazyLoadEmojis
+                previewConfig={{ showPreview: false }}
+                onEmojiClick={(emojiData) => {
+                  void runAction(() => onReact(emojiData.emoji));
+                  setReactionPickerOpen(false);
+                }}
+              />
+            </Suspense>
+          </div>
+        </div>
+      )}
       {actionError && <p className="mt-2 text-xs font-semibold text-[#B91C1C]">{actionError}</p>}
     </div>
   );
@@ -1471,6 +1580,76 @@ function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 
       }}
       className={cn('absolute inset-y-0 left-0 z-40 w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[#E9B93E]' : 'after:bg-[#DFC9A4] hover:after:bg-[#8F4F2E]')}
     />
+  );
+}
+
+function MessageSelectionCheckbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <label className="mt-4 inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center">
+      <input type="checkbox" checked={checked} onChange={onChange} aria-label="Select message to forward" className="h-4 w-4 accent-[#8F4F2E]" />
+    </label>
+  );
+}
+
+function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }: { theme: 'light' | 'dark'; posts: AppPost[]; messageCount: number; onClose: () => void; onForward: (targetPostIds: string[]) => Promise<void> }) {
+  const [query, setQuery] = useState('');
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const visiblePosts = posts.filter((post) => post.title.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 30);
+
+  return (
+    <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className={cn('flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-lg border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')} onClick={(event) => event.stopPropagation()}>
+        <div className="flex h-14 shrink-0 items-center gap-3 border-b border-inherit px-4">
+          <button type="button" aria-label="Close forward dialog" title="Close" onClick={onClose}><X className="h-5 w-5" /></button>
+          <div><p className="font-bold">Forward messages</p><p className={cn('text-xs', muted(theme))}>{messageCount} selected</p></div>
+        </div>
+        <div className="shrink-0 p-4">
+          <label className={cn('flex h-11 items-center gap-2 rounded-lg border px-3', subtleButton(theme))}>
+            <Search className="h-4 w-4" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search recent discussions" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          </label>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 scroll-area">
+          <p className={cn('px-2 pb-2 text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Recent discussions</p>
+          {visiblePosts.length === 0 ? (
+            <p className={cn('p-6 text-center text-sm', muted(theme))}>No available discussions.</p>
+          ) : visiblePosts.map((post) => (
+            <label key={post.id} className={cn('flex cursor-pointer items-center gap-3 rounded-lg p-3', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+              <input
+                type="checkbox"
+                checked={selectedPostIds.has(post.id)}
+                onChange={() => setSelectedPostIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(post.id)) next.delete(post.id); else next.add(post.id);
+                  return next;
+                })}
+                className="h-4 w-4 accent-[#8F4F2E]"
+              />
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FFF3C4] text-[#8F4F2E]"><MessageSquare className="h-4 w-4" /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{post.title}</span><span className={cn('block text-xs', muted(theme))}>Active {formatTimeAgo(post.last_activity_at)}</span></span>
+            </label>
+          ))}
+        </div>
+        <div className="shrink-0 border-t border-inherit p-4">
+          <button
+            type="button"
+            disabled={submitting || selectedPostIds.size === 0}
+            onClick={async () => {
+              setSubmitting(true);
+              setError('');
+              try { await onForward([...selectedPostIds]); } catch (caughtError) { setError(getErrorMessage(caughtError)); setSubmitting(false); }
+            }}
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+            Forward to {selectedPostIds.size || ''} discussion{selectedPostIds.size === 1 ? '' : 's'}
+          </button>
+          {error && <p className="mt-2 text-sm font-semibold text-[#B91C1C]">{error}</p>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2706,15 +2885,57 @@ async function createComment(post: AppPost, userId: string, body: string, isInsi
   }
 }
 
+async function forwardMessages(targetPosts: AppPost[], messages: ForwardableMessage[], userId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  for (const targetPost of targetPosts) {
+    for (const message of messages) {
+      const { data: forwardedComment, error: commentError } = await supabase
+        .from('comments')
+        .insert({
+          workspace_id: targetPost.workspace_id,
+          post_id: targetPost.id,
+          author_id: userId,
+          body: message.body,
+          is_decision: false,
+        })
+        .select('id')
+        .single();
+      if (commentError) throw commentError;
+
+      for (const attachment of message.attachments) {
+        const destinationPath = `${targetPost.workspace_id}/${userId}/${forwardedComment.id}/${crypto.randomUUID()}-${sanitizeFilename(attachment.filename)}`;
+        const { error: copyError } = await supabase.storage.from(attachment.bucket).copy(attachment.object_path, destinationPath);
+        if (copyError) throw copyError;
+        const { error: attachmentError } = await supabase.from('attachments').insert({
+          workspace_id: targetPost.workspace_id,
+          post_id: targetPost.id,
+          comment_id: forwardedComment.id,
+          uploaded_by: userId,
+          bucket: attachment.bucket,
+          object_path: destinationPath,
+          filename: attachment.filename,
+          mime_type: attachment.mime_type,
+          byte_size: attachment.byte_size,
+        });
+        if (attachmentError) {
+          await supabase.storage.from(attachment.bucket).remove([destinationPath]);
+          throw attachmentError;
+        }
+      }
+    }
+  }
+}
+
 async function toggleReaction(post: AppPost, commentId: string | null, userId: string, emoji: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   let query = supabase
     .from('reactions')
     .select('id')
-    .eq('post_id', post.id)
     .eq('user_id', userId)
     .eq('emoji', emoji);
-  query = commentId ? query.eq('comment_id', commentId) : query.is('comment_id', null);
+  query = commentId
+    ? query.is('post_id', null).eq('comment_id', commentId)
+    : query.eq('post_id', post.id).is('comment_id', null);
   const { data: existing, error: lookupError } = await query.limit(1).maybeSingle();
   if (lookupError) throw lookupError;
 
@@ -2726,7 +2947,7 @@ async function toggleReaction(post: AppPost, commentId: string | null, userId: s
 
   const { error } = await supabase.from('reactions').insert({
     workspace_id: post.workspace_id,
-    post_id: post.id,
+    post_id: commentId ? null : post.id,
     comment_id: commentId,
     user_id: userId,
     emoji,
