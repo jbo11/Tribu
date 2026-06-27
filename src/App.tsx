@@ -147,12 +147,13 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState(getInitialInviteToken);
   const [inviteAcceptError, setInviteAcceptError] = useState('');
   const [threadWidth, setThreadWidth] = useState(getInitialThreadWidth);
-  const [chatOpen, setChatOpen] = useState(getInitialChatOpen);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOnOtherPages, setChatOnOtherPages] = useState(getInitialChatOpen);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
   const canManageAdmin = currentRole === 'owner' || currentRole === 'admin';
-  const showThreadPanel = view === 'feed' || chatOpen;
+  const showThreadPanel = chatOpen;
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
   const currentProfile = session?.user.id ? profiles[session.user.id] : undefined;
@@ -166,8 +167,8 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOpen));
-  }, [chatOpen]);
+    window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOnOtherPages));
+  }, [chatOnOtherPages]);
 
   const visiblePosts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -559,6 +560,7 @@ export default function App() {
           view={view}
           onViewChange={(nextView) => {
             setView(nextView);
+            setChatOpen(nextView === 'feed' ? true : chatOnOtherPages);
             setSidebarOpen(false);
           }}
           workspaces={workspaces}
@@ -604,7 +606,7 @@ export default function App() {
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">New post</span>
               </button>
-              {view !== 'feed' && !chatOpen && (
+              {!chatOpen && (
                 <button type="button" aria-label="Toggle side panel" title="Toggle side panel" onClick={() => setChatOpen(true)} className={cn('inline-flex h-11 w-11 items-center justify-center rounded-lg border', surface(theme))}>
                   <PanelRightOpen className="h-4 w-4" />
                 </button>
@@ -648,7 +650,10 @@ export default function App() {
                               theme={theme}
                               space={spaces.find((item) => item.id === post.space_id)}
                               members={memberProfiles}
-                              onClick={() => setSelectedPostId(post.id)}
+                              onClick={() => {
+                                setSelectedPostId(post.id);
+                                setChatOpen(true);
+                              }}
                               canManage={post.author_id === session.user.id || canManageAdmin}
                               onEdit={() => setEditingPost(post)}
                               onAssign={async (assigneeId) => {
@@ -783,7 +788,7 @@ export default function App() {
                 window.localStorage.setItem(THREAD_WIDTH_STORAGE_KEY, String(nextWidth));
               }}
               onClose={() => setChatOpen(false)}
-              canClose={view !== 'feed'}
+              canClose
               onReply={async (body, files, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, false, files, parentCommentId);
@@ -928,8 +933,11 @@ export default function App() {
           section={accountModal}
           theme={theme}
           setTheme={setTheme}
-          chatOpen={chatOpen}
-          setChatOpen={setChatOpen}
+          chatOpen={chatOnOtherPages}
+          setChatOpen={(open) => {
+            setChatOnOtherPages(open);
+            if (view !== 'feed') setChatOpen(open);
+          }}
           profile={currentProfile}
           email={session.user.email ?? ''}
           workspace={selectedWorkspace}
