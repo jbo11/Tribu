@@ -99,7 +99,7 @@ const knowledgeCategories: { value: KnowledgeCategory; label: string }[] = [
 
 const INVITE_STORAGE_KEY = 'tribu_invite_token';
 const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
-const PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone, phone, address, bio';
+const PROFILE_SELECT = 'id, email, display_name, full_name, nickname, avatar_url, timezone, phone, address, bio';
 const linkPreviewCache = new Map<string, AppLinkPreview>();
 const THREAD_WIDTH_STORAGE_KEY = 'tribu_thread_width';
 const THEME_STORAGE_KEY = 'tribu_theme';
@@ -152,11 +152,12 @@ export default function App() {
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
   const canManageAdmin = currentRole === 'owner' || currentRole === 'admin';
+  const showThreadPanel = view === 'feed' || chatOpen;
   const selectedPost = posts.find((post) => post.id === selectedPostId) ?? posts[0];
   const selectedProfile = selectedPost ? profiles[selectedPost.author_id] : undefined;
   const currentProfile = session?.user.id ? profiles[session.user.id] : undefined;
   const memberProfiles = useMemo(
-    () => (Object.values(profiles) as AppProfile[]).sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    () => (Object.values(profiles) as AppProfile[]).sort((a, b) => getProfileName(a).localeCompare(getProfileName(b))),
     [profiles],
   );
 
@@ -603,7 +604,7 @@ export default function App() {
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">New post</span>
               </button>
-              {!chatOpen && (
+              {view !== 'feed' && !chatOpen && (
                 <button type="button" aria-label="Toggle side panel" title="Toggle side panel" onClick={() => setChatOpen(true)} className={cn('inline-flex h-11 w-11 items-center justify-center rounded-lg border', surface(theme))}>
                   <PanelRightOpen className="h-4 w-4" />
                 </button>
@@ -621,7 +622,7 @@ export default function App() {
           </header>
 
           <div
-            className={cn('grid min-h-0 grid-cols-1 overflow-hidden', chatOpen && 'xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]')}
+            className={cn('grid min-h-0 grid-cols-1 overflow-hidden', showThreadPanel && 'xl:grid-cols-[minmax(0,1fr)_var(--thread-width)]')}
             style={{ '--thread-width': `${threadWidth}%` } as CSSProperties}
           >
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
@@ -764,7 +765,7 @@ export default function App() {
               )}
             </section>
 
-            {chatOpen && <ThreadPanel
+            {showThreadPanel && <ThreadPanel
               post={selectedPost}
               profile={selectedProfile}
               comments={comments}
@@ -782,6 +783,7 @@ export default function App() {
                 window.localStorage.setItem(THREAD_WIDTH_STORAGE_KEY, String(nextWidth));
               }}
               onClose={() => setChatOpen(false)}
+              canClose={view !== 'feed'}
               onReply={async (body, files, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, false, files, parentCommentId);
@@ -1009,7 +1011,7 @@ function Sidebar({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
-  const accountName = profile?.display_name || email.split('@')[0] || 'Camp member';
+  const accountName = getProfileName(profile, email.split('@')[0] || 'Camp member');
   const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
 
   useEffect(() => {
@@ -1242,7 +1244,7 @@ function PostRow({
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <Avatar profile={profile} />
-          <span className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</span>
+          <span className="truncate text-sm font-semibold">{getProfileName(profile)}</span>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <label className="sr-only" htmlFor={`assignee-${post.id}`}>Assign post</label>
@@ -1259,7 +1261,7 @@ function PostRow({
             className={cn('h-9 max-w-40 rounded-lg border px-2 text-xs font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60', subtleButton(theme))}
           >
             <option value="">All</option>
-            {members.map((member) => <option key={member.id} value={member.id}>{member.display_name}</option>)}
+            {members.map((member) => <option key={member.id} value={member.id}>{getProfileName(member)}</option>)}
           </select>
           <button
             type="button"
@@ -1321,6 +1323,7 @@ function ThreadPanel({
   width,
   onWidthChange,
   onClose,
+  canClose,
   onReply,
   onReact,
   onDeleteComment,
@@ -1339,6 +1342,7 @@ function ThreadPanel({
   width: number;
   onWidthChange: (width: number) => void;
   onClose: () => void;
+  canClose: boolean;
   onReply: (body: string, files: File[], parentCommentId: string | null) => Promise<void>;
   onReact: (commentId: string | null, emoji: string) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
@@ -1411,7 +1415,7 @@ function ThreadPanel({
     return (
       <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
         <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
-        <button
+        {canClose && <button
           type="button"
           aria-label="Toggle side panel"
           title="Toggle side panel"
@@ -1419,7 +1423,7 @@ function ThreadPanel({
           className={cn('absolute right-4 top-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}
         >
           <PanelRightClose className="h-4 w-4" />
-        </button>
+        </button>}
         <EmptyState theme={theme} icon={MessageSquare} title="No thread selected" body="Select or create a post to view its discussion." />
       </aside>
     );
@@ -1434,7 +1438,7 @@ function ThreadPanel({
             <StatusPill state={post.state} />
             <h2 className="mt-3 text-xl font-bold tracking-tight">{post.title}</h2>
           </div>
-          <button
+          {canClose && <button
             type="button"
             aria-label="Toggle side panel"
             title="Toggle side panel"
@@ -1442,7 +1446,7 @@ function ThreadPanel({
             className={cn('inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', subtleButton(theme))}
           >
             <PanelRightClose className="h-4 w-4" />
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -1544,7 +1548,7 @@ function ThreadPanel({
           <div className={cn('mb-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs', subtleButton(theme))}>
             <ReplyIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1">
-              <strong>{profiles[replyingTo.author_id]?.display_name ?? 'Camp member'}</strong>
+              <strong>{getProfileName(profiles[replyingTo.author_id])}</strong>
               <span className={cn('ml-2 line-clamp-1', muted(theme))}>{replyingTo.body || 'Attachment'}</span>
             </span>
             <button type="button" aria-label="Cancel reply" title="Cancel reply" onClick={() => setReplyingTo(null)}><X className="h-3.5 w-3.5" /></button>
@@ -1651,7 +1655,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
       <div className="mb-3 flex items-center gap-3">
         <Avatar profile={profile} />
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{profile?.display_name ?? 'Camp member'}</p>
+          <p className="truncate text-sm font-semibold">{getProfileName(profile)}</p>
         </div>
       </div>
       {parentComment && (
@@ -2156,13 +2160,13 @@ function AdminView({
                       return (
                         <div key={membership.id} className={cn('grid items-center gap-3 rounded-lg border p-3 md:grid-cols-[auto_minmax(120px,1fr)_minmax(180px,1.4fr)_minmax(130px,1fr)_150px]', surface(theme))}>
                           <Avatar profile={member} />
-                          <span className="min-w-0 truncate text-sm font-semibold">{member?.display_name ?? 'Camp member'}</span>
+                          <span className="min-w-0 truncate text-sm font-semibold">{getProfileFullName(member)}</span>
                           <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.email ?? 'No email'}</span>
                           <span className={cn('min-w-0 truncate text-sm', muted(theme))}>{member?.phone || 'No contact number'}</span>
                           <select
                             value={membership.role}
                             disabled={membership.role === 'owner'}
-                            aria-label={`Role for ${member?.display_name ?? 'member'}`}
+                            aria-label={`Role for ${getProfileFullName(member, 'member')}`}
                             onChange={async (event) => {
                               setRoleError('');
                               try { await onRoleChange(membership.id, event.target.value as WorkspaceRole); }
@@ -2527,10 +2531,11 @@ function SettingsModal({
   workspace?: AppWorkspace;
   role?: WorkspaceRole;
   onClose: () => void;
-  onSaveProfile: (input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string }) => Promise<void>;
+  onSaveProfile: (input: { fullName: string; nickname: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string }) => Promise<void>;
   onUploadAvatar: (file: File) => Promise<string>;
 }) {
-  const [displayName, setDisplayName] = useState(profile?.display_name ?? email.split('@')[0] ?? '');
+  const [fullName, setFullName] = useState(profile?.full_name ?? profile?.display_name ?? '');
+  const [nickname, setNickname] = useState(profile?.nickname ?? profile?.display_name ?? email.split('@')[0] ?? '');
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url ?? '');
   const [phone, setPhone] = useState(profile?.phone ?? '');
   const [address, setAddress] = useState(profile?.address ?? '');
@@ -2550,27 +2555,28 @@ function SettingsModal({
   };
 
   return (
-    <ModalShell theme={theme} title={modalTitles[section]} onClose={onClose}>
+    <ModalShell theme={theme} title={modalTitles[section]} onClose={onClose} wide={section === 'profile'}>
       <div className="grid gap-5">
         {section === 'profile' && <section className={cn('rounded-lg border p-4', surface(theme))}>
           <div className="mb-4 flex items-center gap-3">
-            <Avatar profile={{ id: profile?.id ?? '', email, display_name: displayName || 'Member', avatar_url: avatarUrl || null, timezone }} />
+            <Avatar profile={{ id: profile?.id ?? '', email, display_name: nickname || 'Member', full_name: fullName, nickname, avatar_url: avatarUrl || null, timezone }} />
             <div className="min-w-0">
-              <p className="truncate font-bold">{displayName || 'Camp member'}</p>
+              <p className="truncate font-bold">{nickname || 'Camp member'}</p>
               <p className={cn('truncate text-sm', muted(theme))}>{workspace?.name ?? 'Camp'} · {role ? getRoleLabel(role) : 'Member'}</p>
             </div>
           </div>
           <form
-            className="grid gap-3"
+            className="grid gap-3 md:grid-cols-2"
             onSubmit={async (event) => {
               event.preventDefault();
-              if (!displayName.trim()) return;
+              if (!fullName.trim() || !nickname.trim()) return;
               setSubmitting(true);
               setSaved(false);
               setError('');
               try {
                 await onSaveProfile({
-                  displayName: displayName.trim(),
+                  fullName: fullName.trim(),
+                  nickname: nickname.trim(),
                   avatarUrl: avatarUrl.trim(),
                   phone: phone.trim(),
                   address: address.trim(),
@@ -2586,8 +2592,13 @@ function SettingsModal({
             }}
           >
             <label className="grid gap-2 text-sm font-semibold">
-              <span className="inline-flex items-center gap-2"><User className="h-4 w-4" /> Name</span>
-              <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+              <span className="inline-flex items-center gap-2"><User className="h-4 w-4" /> Full name</span>
+              <input value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+            </label>
+            <label className="grid gap-2 text-sm font-semibold">
+              Nickname
+              <input value={nickname} onChange={(event) => setNickname(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+              <span className={cn('text-xs font-normal', muted(theme))}>Shown in chat, posts, and your profile.</span>
             </label>
             <label className="grid gap-2 text-sm font-semibold">
               <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> Tribu email</span>
@@ -2597,15 +2608,15 @@ function SettingsModal({
               <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" /> Contact number</span>
               <input value={phone} onChange={(event) => setPhone(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
             </label>
-            <label className="grid gap-2 text-sm font-semibold">
+            <label className="grid gap-2 text-sm font-semibold md:col-span-2">
               Address
               <input value={address} onChange={(event) => setAddress(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
             </label>
-            <label className="grid gap-2 text-sm font-semibold">
+            <label className="grid gap-2 text-sm font-semibold md:col-span-2">
               <span className="inline-flex items-center gap-2"><Camera className="h-4 w-4" /> Photo URL</span>
               <input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
             </label>
-            <div className="grid gap-2 text-sm font-semibold">
+            <div className="grid gap-2 text-sm font-semibold md:col-span-2">
               <span>Or upload a photo</span>
               <input
                 ref={avatarInputRef}
@@ -2641,16 +2652,16 @@ function SettingsModal({
               Time zone
               <input value={timezone} onChange={(event) => setTimezone(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
             </label>
-            <label className="grid gap-2 text-sm font-semibold">
+            <label className="grid gap-2 text-sm font-semibold md:col-span-2">
               About
               <textarea value={bio} onChange={(event) => setBio(event.target.value)} className={cn('h-24 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
             </label>
-            <button disabled={submitting || !displayName.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+            <button disabled={submitting || !fullName.trim() || !nickname.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 md:col-span-2">
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               Save profile
             </button>
-            {saved && <p className="text-sm font-semibold text-[#0F766E]">Profile saved.</p>}
-            {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
+            {saved && <p className="text-sm font-semibold text-[#0F766E] md:col-span-2">Profile saved.</p>}
+            {error && <p className="text-sm font-semibold text-[#B91C1C] md:col-span-2">{error}</p>}
           </form>
         </section>}
 
@@ -2669,7 +2680,7 @@ function SettingsModal({
           <div className="mt-5 border-t border-inherit pt-4">
             <p className="font-bold">Workspace layout</p>
             <label className="mt-3 flex items-center justify-between gap-4 text-sm">
-              <span><span className="block font-semibold">Discussion side panel</span><span className={cn('mt-1 block text-xs', muted(theme))}>Keep chat visible while moving between Tribu pages.</span></span>
+              <span><span className="block font-semibold">Discussion side panel</span><span className={cn('mt-1 block text-xs', muted(theme))}>Show chat on Tasks, Knowledge, and Admin. Active Feed always includes it.</span></span>
               <input type="checkbox" checked={chatOpen} onChange={(event) => setChatOpen(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
             </label>
           </div>
@@ -2679,7 +2690,7 @@ function SettingsModal({
           <div className="grid gap-3">
             <section className={cn('rounded-lg border p-4', surface(theme))}>
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Account</p>
-              <div className="mt-3 flex items-center gap-3"><Avatar profile={profile} /><div className="min-w-0"><p className="truncate font-bold">{profile?.display_name || email.split('@')[0] || 'Camp member'}</p><p className={cn('truncate text-sm', muted(theme))}>{email}</p></div></div>
+              <div className="mt-3 flex items-center gap-3"><Avatar profile={profile} /><div className="min-w-0"><p className="truncate font-bold">{getProfileName(profile, email.split('@')[0] || 'Camp member')}</p><p className={cn('truncate text-sm', muted(theme))}>{email}</p></div></div>
             </section>
             <section className={cn('rounded-lg border p-4', surface(theme))}>
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Plan</p>
@@ -2716,10 +2727,10 @@ function SettingsModal({
   );
 }
 
-function ModalShell({ theme, title, children, onClose }: { theme: 'light' | 'dark'; title: string; children: ReactNode; onClose: () => void }) {
+function ModalShell({ theme, title, children, onClose, wide = false }: { theme: 'light' | 'dark'; title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 p-4">
-      <div className={cn('max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl border p-5 shadow-2xl scroll-area', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+      <div className={cn('max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl border p-5 shadow-2xl scroll-area', wide ? 'max-w-4xl' : 'max-w-lg', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-bold">{title}</h2>
           <button aria-label="Close modal" onClick={onClose} className={cn('rounded-lg border p-2', subtleButton(theme))}>
@@ -3003,11 +3014,20 @@ function StatusPill({ state }: { state: AppPost['state'] }) {
   return <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', styles[state])}>{labels[state]}</span>;
 }
 
+function getProfileName(profile?: AppProfile, fallback = 'Camp member') {
+  return profile?.nickname?.trim() || profile?.display_name?.trim() || fallback;
+}
+
+function getProfileFullName(profile?: AppProfile, fallback = 'Camp member') {
+  return profile?.full_name?.trim() || profile?.display_name?.trim() || fallback;
+}
+
 function Avatar({ profile }: { profile?: AppProfile }) {
+  const profileName = getProfileName(profile);
   if (profile?.avatar_url) {
-    return <img src={profile.avatar_url} alt={profile.display_name} className="h-9 w-9 rounded-lg object-cover" />;
+    return <img src={profile.avatar_url} alt={profileName} className="h-9 w-9 rounded-lg object-cover" />;
   }
-  return <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF3C4] text-sm font-bold text-[#8F4F2E]">{profile?.display_name?.slice(0, 1).toUpperCase() ?? 'M'}</div>;
+  return <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF3C4] text-sm font-bold text-[#8F4F2E]">{profileName.slice(0, 1).toUpperCase()}</div>;
 }
 
 async function fetchProfiles(userIds: string[]) {
@@ -3020,7 +3040,7 @@ async function fetchProfiles(userIds: string[]) {
 
   if (!profileResult.error) return (profileResult.data ?? []) as AppProfile[];
 
-  const missingProfileColumn = ['phone', 'address', 'bio'].some((column) => profileResult.error.message.includes(column));
+  const missingProfileColumn = ['full_name', 'nickname', 'phone', 'address', 'bio'].some((column) => profileResult.error.message.includes(column));
   if (!missingProfileColumn) return [];
 
   const fallbackResult = await supabase
@@ -3056,6 +3076,8 @@ async function ensureProfile(session: Session) {
     id: session.user.id,
     email,
     display_name: displayName,
+    full_name: displayName,
+    nickname: displayName,
     avatar_url: session.user.user_metadata?.avatar_url ?? null,
     timezone,
   });
@@ -3434,13 +3456,15 @@ async function updateMemberRole(membershipId: string, role: WorkspaceRole) {
 
 async function updateProfile(
   userId: string,
-  input: { displayName: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string },
+  input: { fullName: string; nickname: string; avatarUrl: string; phone: string; address: string; timezone: string; bio: string },
 ) {
   if (!supabase) return;
   const { data, error: basicError } = await supabase
     .from('users')
     .update({
-      display_name: input.displayName,
+      display_name: input.nickname,
+      full_name: input.fullName,
+      nickname: input.nickname,
       avatar_url: input.avatarUrl || null,
       timezone: input.timezone || null,
     })

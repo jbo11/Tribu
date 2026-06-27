@@ -11,6 +11,8 @@ export interface AppProfile {
   id: string;
   email: string;
   display_name: string;
+  full_name?: string | null;
+  nickname?: string | null;
   avatar_url: string | null;
   timezone: string | null;
   phone?: string | null;
