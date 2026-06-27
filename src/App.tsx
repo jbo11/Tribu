@@ -50,7 +50,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { type Session } from '@supabase/supabase-js';
+import { type RealtimeChannel, type Session } from '@supabase/supabase-js';
 import tribuLogoUrl from './assets/tribu-logo.png';
 import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -151,6 +151,8 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(true);
   const [chatOnOtherPages, setChatOnOtherPages] = useState(getInitialChatOpen);
   const selectedPostIdRef = useRef('');
+  const commentsSignatureRef = useRef('');
+  const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
@@ -421,6 +423,7 @@ export default function App() {
     }
 
     const nextComments = (commentResult.data ?? []) as AppComment[];
+    commentsSignatureRef.current = getCommentsSignature(nextComments);
     const commentIds = nextComments.map((comment) => comment.id);
     const reactionFilter = commentIds.length > 0
       ? `post_id.eq.${postId},comment_id.in.(${commentIds.join(',')})`
@@ -456,10 +459,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !workspaceId) return;
+    if (!supabase || !workspaceId || !session?.access_token) return;
+    let channel: RealtimeChannel | null = null;
+    let cancelled = false;
 
-    const channel = supabase
-      .channel(`workspace-${workspaceId}`)
+    void (async () => {
+      await supabase.realtime.setAuth(session.access_token);
+      if (cancelled) return;
+      channel = supabase
+      .channel(`workspace-${workspaceId}`, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'comments_changed' }, ({ payload }) => {
+        const activePostId = selectedPostIdRef.current;
+        if (activePostId && String(payload?.postId ?? '') === activePostId) void loadComments(activePostId);
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'posts', filter: `workspace_id=eq.${workspaceId}` }, () => {
         void loadWorkspaceData(workspaceId, true);
       })
@@ -484,15 +496,45 @@ export default function App() {
         void loadWorkspaceData(workspaceId, true);
       })
       .subscribe((status, error) => {
+        if (status === 'SUBSCRIBED') workspaceChannelRef.current = channel;
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setNotice(error?.message ?? 'Live updates could not connect. Refresh the page to see new activity while Supabase Realtime is unavailable.');
         }
       });
+    })();
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      if (workspaceChannelRef.current === channel) workspaceChannelRef.current = null;
+      if (channel) void supabase.removeChannel(channel);
     };
-  }, [loadComments, loadWorkspaceData, workspaceId]);
+  }, [loadComments, loadWorkspaceData, session?.access_token, workspaceId]);
+
+  useEffect(() => {
+    if (!supabase || !workspaceId || !session?.user.id) return;
+    let checking = false;
+    const reconcileMessages = async () => {
+      const activePostId = selectedPostIdRef.current;
+      if (!activePostId || checking || document.visibilityState !== 'visible') return;
+      checking = true;
+      const { data, error } = await supabase
+        .from('comments')
+        .select('id, updated_at')
+        .eq('post_id', activePostId)
+        .order('created_at', { ascending: true });
+      checking = false;
+      if (error) return;
+      const signature = (data ?? []).map((comment) => `${comment.id}:${comment.updated_at}`).join('|');
+      if (signature !== commentsSignatureRef.current) void loadComments(activePostId);
+    };
+    const intervalId = window.setInterval(() => void reconcileMessages(), 3000);
+    const handleVisibility = () => { if (document.visibilityState === 'visible') void reconcileMessages(); };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [loadComments, session?.user.id, workspaceId]);
 
   useEffect(() => {
     if (!selectedPost?.id) {
@@ -810,6 +852,7 @@ export default function App() {
               onReply={async (body, files, parentCommentId) => {
                 if (!selectedPost || !session.user) return;
                 await createComment(selectedPost, session.user.id, body, false, files, parentCommentId);
+                void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'comments_changed', payload: { postId: selectedPost.id } });
                 await loadWorkspaceData(workspaceId, true);
                 await loadComments(selectedPost.id);
               }}
@@ -821,6 +864,7 @@ export default function App() {
               onDeleteComment={async (commentId) => {
                 if (!selectedPost) return;
                 await deleteComment(commentId);
+                void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'comments_changed', payload: { postId: selectedPost.id } });
                 await loadComments(selectedPost.id);
               }}
               onForward={async (messageIds, targetPostIds) => {
@@ -841,6 +885,7 @@ export default function App() {
                 }).filter((message): message is ForwardableMessage => Boolean(message));
                 const targets = posts.filter((item) => targetPostIds.includes(item.id));
                 await forwardMessages(targets, sourceMessages, session.user.id);
+                targetPostIds.forEach((postId) => void workspaceChannelRef.current?.send({ type: 'broadcast', event: 'comments_changed', payload: { postId } }));
                 await loadWorkspaceData(workspaceId, true);
               }}
             />}
@@ -3713,6 +3758,10 @@ function groupReactions(reactions: AppReaction[]) {
     groups.set(reaction.emoji, group);
   });
   return [...groups.values()];
+}
+
+function getCommentsSignature(comments: Pick<AppComment, 'id' | 'updated_at'>[]) {
+  return comments.map((comment) => `${comment.id}:${comment.updated_at}`).join('|');
 }
 
 function clampThreadWidth(width: number) {
