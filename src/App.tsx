@@ -2,6 +2,7 @@ import { lazy, Suspense, type CSSProperties, type ReactNode, useCallback, useEff
 import {
   Archive,
   ArchiveRestore,
+  ArrowUpDown,
   Bug,
   Camera,
   CalendarDays,
@@ -12,10 +13,12 @@ import {
   ClipboardList,
   Copy,
   Download,
+  EllipsisVertical,
   File as FileIcon,
   FileText,
   Filter,
   Globe2,
+  GripVertical,
   Headphones,
   Image as ImageIcon,
   Inbox,
@@ -33,6 +36,8 @@ import {
   Palette,
   Pencil,
   Phone,
+  Pin,
+  PinOff,
   Plus,
   Reply as ReplyIcon,
   Search,
@@ -120,6 +125,12 @@ interface ForwardableMessage {
   attachments: AppAttachment[];
 }
 
+interface RoomPreference {
+  space_id: string;
+  position: number;
+  pinned: boolean;
+}
+
 type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'about' | 'report';
 
 export default function App() {
@@ -134,6 +145,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<AppWorkspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState('');
   const [spaces, setSpaces] = useState<AppSpace[]>([]);
+  const [roomPreferences, setRoomPreferences] = useState<Record<string, RoomPreference>>({});
   const [activeSpaceId, setActiveSpaceId] = useState('all');
   const [posts, setPosts] = useState<AppPost[]>([]);
   const [comments, setComments] = useState<AppComment[]>([]);
@@ -148,6 +160,7 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
   const [spaceModalOpen, setSpaceModalOpen] = useState(false);
+  const [renamingSpace, setRenamingSpace] = useState<AppSpace | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [accountModal, setAccountModal] = useState<AccountModalView | null>(null);
   const [editingPost, setEditingPost] = useState<AppPost | null>(null);
@@ -162,6 +175,8 @@ export default function App() {
   const selectedPostIdRef = useRef('');
   const commentsSignatureRef = useRef('');
   const workspaceChannelRef = useRef<RealtimeChannel | null>(null);
+
+  const spaceIdsKey = spaces.map((space) => space.id).join(',');
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const currentRole = selectedWorkspace?.role;
@@ -208,6 +223,32 @@ export default function App() {
     window.addEventListener('keydown', toggleDiscussionPanel);
     return () => window.removeEventListener('keydown', toggleDiscussionPanel);
   }, []);
+
+  const loadRoomPreferences = useCallback(async (userId: string, spaceIds: string[]) => {
+    if (!supabase || spaceIds.length === 0) {
+      setRoomPreferences({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from('room_preferences')
+      .select('space_id, position, pinned')
+      .eq('user_id', userId)
+      .in('space_id', spaceIds);
+    if (error) {
+      setRoomPreferences({});
+      return;
+    }
+    const preferences = (data ?? []) as RoomPreference[];
+    setRoomPreferences(Object.fromEntries(preferences.map((preference) => [preference.space_id, preference])));
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user.id) {
+      setRoomPreferences({});
+      return;
+    }
+    void loadRoomPreferences(session.user.id, spaces.map((space) => space.id));
+  }, [loadRoomPreferences, session?.user.id, spaceIdsKey]);
 
   const visiblePosts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -636,6 +677,7 @@ export default function App() {
           activeSpaceId={activeSpaceId}
           onSpaceChange={setActiveSpaceId}
           spaces={spaces}
+          roomPreferences={roomPreferences}
           theme={theme}
           view={view}
           onViewChange={(nextView) => {
@@ -651,6 +693,23 @@ export default function App() {
           plan={selectedWorkspace?.plan ?? 'free'}
           onClose={() => setSidebarOpen(false)}
           onCreateSpace={() => setSpaceModalOpen(true)}
+          onRenameSpace={setRenamingSpace}
+          onSaveRoomOrder={async (orderedSpaces) => {
+            try {
+              const nextPreferences = await saveRoomOrder(session.user.id, orderedSpaces, roomPreferences);
+              setRoomPreferences(nextPreferences);
+            } catch (caughtError) {
+              setNotice(getErrorMessage(caughtError));
+            }
+          }}
+          onSetRoomPinned={async (space, pinned) => {
+            try {
+              const nextPreferences = await setRoomPinned(session.user.id, space, pinned, roomPreferences);
+              setRoomPreferences(nextPreferences);
+            } catch (caughtError) {
+              setNotice(getErrorMessage(caughtError));
+            }
+          }}
           onDeleteSpace={async (space) => {
             if (!window.confirm(`Delete the room "${space.name}"? Its posts, discussions, and related activity will also be permanently deleted.`)) return;
             try {
@@ -969,6 +1028,19 @@ export default function App() {
         />
       )}
 
+      {renamingSpace && (
+        <RenameRoomModal
+          theme={theme}
+          room={renamingSpace}
+          onClose={() => setRenamingSpace(null)}
+          onRename={async (name) => {
+            await renameSpace(renamingSpace.id, name);
+            setRenamingSpace(null);
+            await loadWorkspaceData(workspaceId, true);
+          }}
+        />
+      )}
+
       {taskModalOpen && (
         <TaskModal
           theme={theme}
@@ -1085,6 +1157,7 @@ function Sidebar({
   activeSpaceId,
   onSpaceChange,
   spaces,
+  roomPreferences,
   theme,
   view,
   onViewChange,
@@ -1096,6 +1169,9 @@ function Sidebar({
   plan,
   onClose,
   onCreateSpace,
+  onRenameSpace,
+  onSaveRoomOrder,
+  onSetRoomPinned,
   onDeleteSpace,
   onOpenAccount,
   onSignOut,
@@ -1104,6 +1180,7 @@ function Sidebar({
   activeSpaceId: string;
   onSpaceChange: (spaceId: string) => void;
   spaces: AppSpace[];
+  roomPreferences: Record<string, RoomPreference>;
   theme: 'light' | 'dark';
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
@@ -1115,6 +1192,9 @@ function Sidebar({
   plan: string;
   onClose: () => void;
   onCreateSpace: () => void;
+  onRenameSpace: (space: AppSpace) => void;
+  onSaveRoomOrder: (spaces: AppSpace[]) => Promise<void>;
+  onSetRoomPinned: (space: AppSpace, pinned: boolean) => Promise<void>;
   onDeleteSpace: (space: AppSpace) => Promise<void>;
   onOpenAccount: (view: AccountModalView) => void;
   onSignOut: () => void;
@@ -1126,9 +1206,23 @@ function Sidebar({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const [roomMenuId, setRoomMenuId] = useState('');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
+  const [draggedRoomId, setDraggedRoomId] = useState('');
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const roomMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
   const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const orderedSpaces = useMemo(() => [...spaces].sort((a, b) => {
+    const aPreference = roomPreferences[a.id];
+    const bPreference = roomPreferences[b.id];
+    if (Boolean(aPreference?.pinned) !== Boolean(bPreference?.pinned)) return aPreference?.pinned ? -1 : 1;
+    const aPosition = aPreference?.position ?? Number.MAX_SAFE_INTEGER;
+    const bPosition = bPreference?.position ?? Number.MAX_SAFE_INTEGER;
+    if (aPosition !== bPosition) return aPosition - bPosition;
+    return a.name.localeCompare(b.name);
+  }), [roomPreferences, spaces]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -1142,6 +1236,44 @@ function Sidebar({
     document.addEventListener('pointerdown', closeMenu);
     return () => document.removeEventListener('pointerdown', closeMenu);
   }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!roomMenuId) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (!roomMenuRef.current?.contains(event.target as Node)) {
+        setRoomMenuId('');
+        setSortMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', closeMenu);
+    return () => document.removeEventListener('pointerdown', closeMenu);
+  }, [roomMenuId]);
+
+  const saveSortedRooms = async (mode: 'name' | 'newest') => {
+    const sorted = [...orderedSpaces].sort((a, b) => {
+      const pinnedDifference = Number(Boolean(roomPreferences[b.id]?.pinned)) - Number(Boolean(roomPreferences[a.id]?.pinned));
+      if (pinnedDifference) return pinnedDifference;
+      return mode === 'name'
+        ? a.name.localeCompare(b.name)
+        : new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    await onSaveRoomOrder(sorted);
+    setRoomMenuId('');
+    setSortMenuOpen(false);
+  };
+
+  const dropRoom = async (targetRoomId: string) => {
+    if (!draggedRoomId || draggedRoomId === targetRoomId) return;
+    if (roomPreferences[draggedRoomId]?.pinned || roomPreferences[targetRoomId]?.pinned) return;
+    const next = [...orderedSpaces];
+    const sourceIndex = next.findIndex((space) => space.id === draggedRoomId);
+    const targetIndex = next.findIndex((space) => space.id === targetRoomId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [moved] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    setDraggedRoomId('');
+    await onSaveRoomOrder(next);
+  };
 
   const openAccountView = (nextView: AccountModalView) => {
     setAccountMenuOpen(false);
@@ -1182,7 +1314,7 @@ function Sidebar({
           {canManageAdmin && <NavButton icon={ShieldCheck} label="Admin" active={view === 'admin'} onClick={() => onViewChange('admin')} theme={theme} />}
         </nav>
 
-        <section className="mt-7 min-h-0 overflow-hidden">
+        <section className="mt-7 min-h-0 overflow-visible">
           <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
             Rooms
             {canManageSpaces && (
@@ -1198,31 +1330,65 @@ function Sidebar({
             >
               All posts
             </button>
-            {spaces.map((space) => {
-              const canDeleteRoom = canManageSpaces || (currentRole === 'member' && space.created_by === profile?.id);
+            {orderedSpaces.map((space) => {
+              const canManageRoom = canManageSpaces || (currentRole === 'member' && space.created_by === profile?.id);
+              const preference = roomPreferences[space.id];
+              const pinned = Boolean(preference?.pinned);
+              const menuOpen = roomMenuId === space.id;
               return (
-                <div key={space.id} className="relative">
+                <div
+                  key={space.id}
+                  className={cn('relative transition', draggedRoomId === space.id && 'opacity-45')}
+                  draggable={reorderMode && !pinned}
+                  onDragStart={() => setDraggedRoomId(space.id)}
+                  onDragEnd={() => setDraggedRoomId('')}
+                  onDragOver={(event) => { if (reorderMode && !pinned) event.preventDefault(); }}
+                  onDrop={() => void dropRoom(space.id)}
+                >
                   <button
                     onClick={() => onSpaceChange(space.id)}
-                    className={cn('w-full rounded-lg border p-3 text-left transition', canDeleteRoom && 'pr-11', activeSpaceId === space.id ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
+                    className={cn('w-full rounded-lg border p-3 pr-11 text-left transition', reorderMode && !pinned && 'cursor-grab pl-9 active:cursor-grabbing', activeSpaceId === space.id ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
                   >
                     <div className="flex items-center gap-2">
                       <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
                       <span className="truncate text-sm font-semibold">{space.name}</span>
+                      {pinned && <Pin className="h-3.5 w-3.5 shrink-0" aria-label="Pinned room" />}
                     </div>
                     <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[var(--accent-strong)]' : muted(theme))}>{getRoomAccessLabel(space.access)} room</p>
                   </button>
-                  {canDeleteRoom && (
+                  {reorderMode && !pinned && <GripVertical className={cn('pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2', muted(theme))} />}
+                  <div ref={menuOpen ? roomMenuRef : undefined}>
                     <button
                       type="button"
-                      aria-label={`Delete ${space.name} room`}
-                      title="Delete room"
-                      onClick={() => void onDeleteSpace(space)}
-                      className={cn('absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md border transition', theme === 'dark' ? 'border-white/10 text-[#FCA5A5] hover:bg-white/10' : 'border-[#FECACA] text-[#B91C1C] hover:bg-[#FEF2F2]')}
+                      aria-label={`${space.name} room options`}
+                      title="Room options"
+                      aria-expanded={menuOpen}
+                      onClick={() => { setRoomMenuId((current) => current === space.id ? '' : space.id); setSortMenuOpen(false); }}
+                      className={cn('absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md transition', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <EllipsisVertical className="h-4 w-4" />
                     </button>
-                  )}
+                    {menuOpen && (
+                      <div className={cn('absolute right-2 top-10 z-[65] w-48 rounded-lg border p-1.5 text-sm shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D] text-white' : 'border-[#E7E3EA] bg-white text-[#3D3744]')}>
+                        {canManageRoom && <RoomMenuButton icon={Pencil} label="Rename" onClick={() => { setRoomMenuId(''); onRenameSpace(space); }} />}
+                        <RoomMenuButton icon={GripVertical} label={reorderMode ? 'Finish moving' : 'Move'} onClick={() => { setReorderMode((active) => !active); setRoomMenuId(''); }} />
+                        <RoomMenuButton icon={ArrowUpDown} label="Sort" trailing={ChevronRight} active={sortMenuOpen} onClick={() => setSortMenuOpen((open) => !open)} />
+                        {sortMenuOpen && (
+                          <div className="mb-1 ml-3 border-l border-current/15 pl-2">
+                            <RoomMenuButton label="Name A–Z" onClick={() => void saveSortedRooms('name')} />
+                            <RoomMenuButton label="Newest first" onClick={() => void saveSortedRooms('newest')} />
+                          </div>
+                        )}
+                        <RoomMenuButton icon={pinned ? PinOff : Pin} label={pinned ? 'Unpin' : 'Pin'} onClick={() => { setRoomMenuId(''); void onSetRoomPinned(space, !pinned); }} />
+                        {canManageRoom && (
+                          <>
+                            <div className="my-1 border-t border-current/10" />
+                            <RoomMenuButton icon={Trash2} label="Delete" danger onClick={() => { setRoomMenuId(''); void onDeleteSpace(space); }} />
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -1300,6 +1466,20 @@ function Sidebar({
         </div>
       </aside>
     </>
+  );
+}
+
+function RoomMenuButton({ icon: Icon, label, trailing: TrailingIcon, active = false, danger = false, onClick }: { icon?: LucideIcon; label: string; trailing?: LucideIcon; active?: boolean; danger?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn('flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left font-semibold transition hover:bg-[var(--accent-soft)] hover:text-[var(--accent-strong)]', active && 'bg-black/5', danger && 'text-[#B91C1C]')}
+    >
+      {Icon ? <Icon className="h-4 w-4 shrink-0" /> : <span className="w-4 shrink-0" />}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {TrailingIcon && <TrailingIcon className={cn('h-4 w-4 shrink-0 transition', active && 'rotate-90')} />}
+    </button>
   );
 }
 
@@ -2623,6 +2803,34 @@ function SpaceModal({
   );
 }
 
+function RenameRoomModal({ theme, room, onClose, onRename }: { theme: 'light' | 'dark'; room: AppSpace; onClose: () => void; onRename: (name: string) => Promise<void> }) {
+  const [name, setName] = useState(room.name);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <ModalShell theme={theme} title="Rename room" onClose={onClose}>
+      <form className="grid gap-4" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!name.trim()) return;
+        setSubmitting(true);
+        setError('');
+        try { await onRename(name.trim()); }
+        catch (caughtError) { setError(getErrorMessage(caughtError)); setSubmitting(false); }
+      }}>
+        <label className="grid gap-2 text-sm font-semibold">
+          Room name
+          <input autoFocus value={name} onChange={(event) => setName(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
+        </label>
+        <button disabled={submitting || !name.trim() || name.trim() === room.name} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+          Save name
+        </button>
+        {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
+      </form>
+    </ModalShell>
+  );
+}
+
 function TaskModal({
   theme,
   profiles,
@@ -3440,6 +3648,46 @@ async function deleteSpace(spaceId: string) {
 
   if (error) throw error;
   if (!data?.length) throw new Error('You do not have permission to delete this room.');
+}
+
+async function renameSpace(spaceId: string, name: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('rename_room', {
+    target_space_id: spaceId,
+    new_name: name,
+    new_slug: `${slugify(name)}-${crypto.randomUUID().slice(0, 6)}`,
+  });
+  if (error) throw error;
+}
+
+async function saveRoomOrder(userId: string, orderedSpaces: AppSpace[], currentPreferences: Record<string, RoomPreference>) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const rows = orderedSpaces.map((space, position) => ({
+    user_id: userId,
+    space_id: space.id,
+    position,
+    pinned: Boolean(currentPreferences[space.id]?.pinned),
+    updated_at: new Date().toISOString(),
+  }));
+  const { error } = await supabase.from('room_preferences').upsert(rows, { onConflict: 'user_id,space_id' });
+  if (error) throw error;
+  return Object.fromEntries(rows.map(({ space_id, position, pinned }) => [space_id, { space_id, position, pinned }])) as Record<string, RoomPreference>;
+}
+
+async function setRoomPinned(userId: string, space: AppSpace, pinned: boolean, currentPreferences: Record<string, RoomPreference>) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const nextPreference: RoomPreference = {
+    space_id: space.id,
+    position: currentPreferences[space.id]?.position ?? Object.keys(currentPreferences).length,
+    pinned,
+  };
+  const { error } = await supabase.from('room_preferences').upsert({
+    user_id: userId,
+    ...nextPreference,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,space_id' });
+  if (error) throw error;
+  return { ...currentPreferences, [space.id]: nextPreference };
 }
 
 async function createPost(workspaceId: string, spaceId: string, userId: string, title: string, body: string) {
