@@ -651,6 +651,17 @@ export default function App() {
           plan={selectedWorkspace?.plan ?? 'free'}
           onClose={() => setSidebarOpen(false)}
           onCreateSpace={() => setSpaceModalOpen(true)}
+          onDeleteSpace={async (space) => {
+            if (!window.confirm(`Delete the room "${space.name}"? Its posts, discussions, and related activity will also be permanently deleted.`)) return;
+            try {
+              await deleteSpace(space.id);
+              if (activeSpaceId === space.id) setActiveSpaceId('all');
+              setSelectedPostId('');
+              await loadWorkspaceData(workspaceId, true);
+            } catch (caughtError) {
+              setNotice(getErrorMessage(caughtError));
+            }
+          }}
           onOpenAccount={setAccountModal}
           onSignOut={() => void supabase?.auth.signOut()}
           canManageAdmin={canManageAdmin}
@@ -1085,6 +1096,7 @@ function Sidebar({
   plan,
   onClose,
   onCreateSpace,
+  onDeleteSpace,
   onOpenAccount,
   onSignOut,
   canManageAdmin,
@@ -1103,6 +1115,7 @@ function Sidebar({
   plan: string;
   onClose: () => void;
   onCreateSpace: () => void;
+  onDeleteSpace: (space: AppSpace) => Promise<void>;
   onOpenAccount: (view: AccountModalView) => void;
   onSignOut: () => void;
   canManageAdmin: boolean;
@@ -1185,19 +1198,34 @@ function Sidebar({
             >
               All posts
             </button>
-            {spaces.map((space) => (
-              <button
-                key={space.id}
-                onClick={() => onSpaceChange(space.id)}
-                className={cn('w-full rounded-lg border p-3 text-left transition', activeSpaceId === space.id ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
-                  <span className="truncate text-sm font-semibold">{space.name}</span>
+            {spaces.map((space) => {
+              const canDeleteRoom = canManageSpaces || (currentRole === 'member' && space.created_by === profile?.id);
+              return (
+                <div key={space.id} className="relative">
+                  <button
+                    onClick={() => onSpaceChange(space.id)}
+                    className={cn('w-full rounded-lg border p-3 text-left transition', canDeleteRoom && 'pr-11', activeSpaceId === space.id ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
+                      <span className="truncate text-sm font-semibold">{space.name}</span>
+                    </div>
+                    <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[var(--accent-strong)]' : muted(theme))}>{getRoomAccessLabel(space.access)} room</p>
+                  </button>
+                  {canDeleteRoom && (
+                    <button
+                      type="button"
+                      aria-label={`Delete ${space.name} room`}
+                      title="Delete room"
+                      onClick={() => void onDeleteSpace(space)}
+                      className={cn('absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md border transition', theme === 'dark' ? 'border-white/10 text-[#FCA5A5] hover:bg-white/10' : 'border-[#FECACA] text-[#B91C1C] hover:bg-[#FEF2F2]')}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
-                <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[var(--accent-strong)]' : muted(theme))}>{getRoomAccessLabel(space.access)} room</p>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </section>
 
@@ -3400,6 +3428,18 @@ async function createSpace(workspaceId: string, userId: string, name: string, ac
 
   if (error) throw error;
   return data as AppSpace;
+}
+
+async function deleteSpace(spaceId: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase
+    .from('spaces')
+    .delete()
+    .eq('id', spaceId)
+    .select('id');
+
+  if (error) throw error;
+  if (!data?.length) throw new Error('You do not have permission to delete this room.');
 }
 
 async function createPost(workspaceId: string, spaceId: string, userId: string, title: string, body: string) {
