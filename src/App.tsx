@@ -3,7 +3,6 @@ import {
   Archive,
   ArchiveRestore,
   Bug,
-  Cable,
   Camera,
   CalendarDays,
   ChevronDown,
@@ -35,7 +34,6 @@ import {
   Pencil,
   Phone,
   Plus,
-  Presentation,
   Reply as ReplyIcon,
   Search,
   Send,
@@ -44,7 +42,6 @@ import {
   ShieldCheck,
   Smile,
   Sun,
-  Table2,
   Trash2,
   User,
   UserPlus,
@@ -1061,7 +1058,16 @@ function AmbientMotifs({ theme }: { theme: 'light' | 'dark' }) {
 }
 
 function TriCordLogo({ className = '' }: { className?: string }) {
-  return <Cable className={cn('stroke-[2.4]', className)} aria-hidden="true" />;
+  return (
+    <svg viewBox="0 0 48 48" fill="none" className={className} aria-hidden="true">
+      <path d="M10 8c0 9 3 12 10 16 5 3 6 8 4 16" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
+      <path d="M24 6c0 8-8 12-8 19 0 7 8 9 8 17" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
+      <path d="M38 8c0 9-3 12-10 16-5 3-6 8-4 16" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
+      <circle cx="10" cy="8" r="2.3" fill="currentColor" />
+      <circle cx="24" cy="6" r="2.3" fill="currentColor" />
+      <circle cx="38" cy="8" r="2.3" fill="currentColor" />
+    </svg>
+  );
 }
 
 function Sidebar({
@@ -1105,6 +1111,7 @@ function Sidebar({
   const canManageSpaces = currentRole === 'owner' || currentRole === 'admin';
   const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'hub';
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
@@ -1115,6 +1122,7 @@ function Sidebar({
     const closeMenu = (event: PointerEvent) => {
       if (!accountMenuRef.current?.contains(event.target as Node)) {
         setAccountMenuOpen(false);
+        setSettingsMenuOpen(false);
         setHelpMenuOpen(false);
       }
     };
@@ -1124,6 +1132,7 @@ function Sidebar({
 
   const openAccountView = (nextView: AccountModalView) => {
     setAccountMenuOpen(false);
+    setSettingsMenuOpen(false);
     setHelpMenuOpen(false);
     onOpenAccount(nextView);
   };
@@ -1203,11 +1212,25 @@ function Sidebar({
                 </div>
               </div>
               <div className="mt-2 grid gap-1">
-                <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
-                <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
-                <AccountMenuButton icon={Settings} label="Settings" onClick={() => openAccountView('settings')} />
                 <div className="relative">
-                  <AccountMenuButton icon={CircleHelp} label="Help" rooming={ChevronRight} active={helpMenuOpen} onClick={() => setHelpMenuOpen((open) => !open)} />
+                  <AccountMenuButton icon={Settings} label="Settings" rooming={ChevronRight} active={settingsMenuOpen} onClick={() => { setSettingsMenuOpen((open) => !open); setHelpMenuOpen(false); }} />
+                  {settingsMenuOpen && (
+                    <>
+                      <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
+                        <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
+                        <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                        <AccountMenuButton icon={Settings} label="Account settings" onClick={() => openAccountView('settings')} />
+                      </div>
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
+                        <AccountMenuButton icon={Palette} label="Personalization" onClick={() => openAccountView('personalization')} />
+                        <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
+                        <AccountMenuButton icon={Settings} label="Account settings" onClick={() => openAccountView('settings')} />
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="relative">
+                  <AccountMenuButton icon={CircleHelp} label="Help" rooming={ChevronRight} active={helpMenuOpen} onClick={() => { setHelpMenuOpen((open) => !open); setSettingsMenuOpen(false); }} />
                   {helpMenuOpen && (
                     <>
                       <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
@@ -1234,6 +1257,7 @@ function Sidebar({
             aria-expanded={accountMenuOpen}
             onClick={() => {
               setAccountMenuOpen((open) => !open);
+              setSettingsMenuOpen(false);
               setHelpMenuOpen(false);
             }}
             className={cn('flex w-full items-center gap-3 rounded-lg border p-2 text-left transition', theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC] hover:bg-white/10' : 'border-[#E7E3EA] bg-[#F7F6F9] text-[#17151D] hover:bg-[#F0EDF3]')}
@@ -1710,13 +1734,10 @@ function ThreadPanel({
               <AttachmentMenu
                 theme={theme}
                 cameraAvailable={cameraAvailable}
-                onDocument={() => openFilePicker('.pdf,.doc,.docx,.txt,.rtf')}
+                onDocument={() => openFilePicker('.pdf,.doc,.docx,.txt,.rtf,.csv,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.key,.zip,.rar,.7z,.tar,.gz')}
                 onMedia={() => openFilePicker('image/*,video/*')}
                 onCamera={() => openFilePicker('image/*,video/*', true)}
                 onAudio={() => openFilePicker('audio/*')}
-                onSpreadsheet={() => openFilePicker('.csv,.xls,.xlsx,.ods')}
-                onPresentation={() => openFilePicker('.ppt,.pptx,.odp,.key')}
-                onArchive={() => openFilePicker('.zip,.rar,.7z,.tar,.gz')}
               />
             )}
           </div>
@@ -1976,15 +1997,12 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
   );
 }
 
-function AttachmentMenu({ theme, cameraAvailable, onDocument, onMedia, onCamera, onAudio, onSpreadsheet, onPresentation, onArchive }: { theme: 'light' | 'dark'; cameraAvailable: boolean; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void; onSpreadsheet: () => void; onPresentation: () => void; onArchive: () => void }) {
+function AttachmentMenu({ theme, cameraAvailable, onDocument, onMedia, onCamera, onAudio }: { theme: 'light' | 'dark'; cameraAvailable: boolean; onDocument: () => void; onMedia: () => void; onCamera: () => void; onAudio: () => void }) {
   const items: { label: string; icon: LucideIcon; action: () => void; color: string; disabled?: boolean }[] = [
     { label: 'Document', icon: FileText, action: onDocument, color: 'text-[#7C3AED]' },
     { label: 'Photos & videos', icon: ImageIcon, action: onMedia, color: 'text-[#2563EB]' },
     { label: 'Camera', icon: Camera, action: onCamera, color: 'text-[#DB2777]', disabled: !cameraAvailable },
     { label: 'Audio', icon: Headphones, action: onAudio, color: 'text-[#EA580C]' },
-    { label: 'Spreadsheet', icon: Table2, action: onSpreadsheet, color: 'text-[#0F766E]' },
-    { label: 'Presentation', icon: Presentation, action: onPresentation, color: 'text-[#C026D3]' },
-    { label: 'Archive', icon: Archive, action: onArchive, color: 'text-[#64748B]' },
   ];
   return (
     <div className={cn('absolute bottom-12 left-0 z-40 w-56 rounded-lg border p-2 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
@@ -2759,9 +2777,16 @@ function SettingsModal({
               <input value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
             </label>
             <label className="grid gap-2 text-sm font-semibold">
-              Nickname
+              <span className="inline-flex items-start gap-1">
+                Nickname
+                <span className="group relative inline-flex" tabIndex={0}>
+                  <CircleHelp className="mt-0.5 h-3 w-3" aria-label="About nicknames" />
+                  <span role="tooltip" className={cn('pointer-events-none absolute bottom-[calc(100%+0.4rem)] left-1/2 z-30 w-48 -translate-x-1/2 rounded-md border px-2.5 py-2 text-center text-xs font-normal opacity-0 shadow-lg transition group-hover:opacity-100 group-focus:opacity-100', theme === 'dark' ? 'border-white/10 bg-[#17151D] text-white' : 'border-[#E7E3EA] bg-white text-[#3D3744]')}>
+                    Shown in chat, posts, and your profile.
+                  </span>
+                </span>
+              </span>
               <input value={nickname} onChange={(event) => setNickname(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
-              <span className={cn('text-xs font-normal', muted(theme))}>Shown in chat, posts, and your profile.</span>
             </label>
             <label className="grid gap-2 text-sm font-semibold">
               <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> TriCord email</span>
