@@ -1,15 +1,15 @@
-# Tribu CTO Technical Specification
+# TriCord CTO Technical Specification
 
 ## 1. Product Definition
 
-Tribu is a post-based collaborative camp for teams that want decisions, files, tasks, and discussion history to stay grouped around the topic that created them. It replaces channels with trails plus active posts.
+TriCord is a post-based collaborative hub for teams that want decisions, files, tasks, and discussion history to stay grouped around the topic that created them. It replaces channels with rooms plus active posts.
 
 Core product rules:
 
 - Every discussion starts as a post.
 - Replies, files, tasks, decisions, and summaries live inside the post.
 - Recent activity bumps posts to the top of the active feed.
-- Trails provide access boundaries without recreating channel clutter.
+- Rooms provide access boundaries without recreating channel clutter.
 - The data model is ready for a future auditable AI layer, but AI is not active in the current app.
 
 ## 2. System Architecture
@@ -34,15 +34,15 @@ Recommended runtime services:
 
 ## 3. Database Schema
 
-The initial Supabase migration is in `supabase/migrations/20260624153000_initial_tribu_schema.sql`.
+The initial Supabase migration is in `supabase/migrations/20260624153000_initial_tricord_schema.sql`.
 
 Primary entities:
 
 - `users`: app profiles linked to Supabase Auth.
-- `workspaces`: internal table for camp account boundaries, Chief, brand, security, and plan.
-- `memberships`: internal table for camp role model: owner (Chief in the UI), admin, member, guest.
-- `spaces`: internal table for public, private, or invite-only trails.
-- `space_memberships`: internal membership table for private and invite-only trails.
+- `workspaces`: internal table for hub account boundaries, Owner, brand, security, and plan.
+- `memberships`: internal table for hub role model: owner (Owner in the UI), admin, member, guest.
+- `spaces`: internal table for public, private, or invite-only rooms.
+- `space_memberships`: internal membership table for private and invite-only rooms.
 - `posts`: living collaboration threads with full-text and vector search fields.
 - `comments`: nested discussion, decisions, and agent replies.
 - `reactions`: post and comment reactions.
@@ -56,29 +56,29 @@ Primary entities:
 
 Indexes:
 
-- Camp and trail feed indexes by `last_activity_at`.
+- Hub and room feed indexes by `last_activity_at`.
 - GIN full-text indexes on posts and comments.
 - IVFFlat vector indexes for semantic search.
 - Notification, task, activity, audit, and future AI-message lookup indexes.
 
 ## 4. Permission Model
 
-Tribu intentionally avoids custom role hierarchies.
+TriCord intentionally avoids custom role hierarchies.
 
-Camp roles:
+Hub roles:
 
-- Chief: billing, transfer ownership, delete camp, security, all admin controls.
+- Owner: billing, transfer ownership, delete hub, security, all admin controls.
 - Admin: members, settings, integrations, analytics, archived content.
 - Member: create posts, reply, upload files, create tasks, use agents, search.
-- Guest: invited trails/posts only, limited collaboration.
+- Guest: invited rooms/posts only, limited collaboration.
 
 Access is evaluated in this order:
 
-1. Camp role.
-2. Trail visibility or membership.
+1. Hub role.
+2. Room visibility or membership.
 3. Content state: open, read-only, locked, archived.
 
-Future AI workers must inherit camp and trail visibility. They cannot invite users, manage billing, alter settings, or escalate permissions.
+Future AI workers must inherit hub and room visibility. They cannot invite users, manage billing, alter settings, or escalate permissions.
 
 ## 5. API Design
 
@@ -86,8 +86,8 @@ Use Next.js route handlers and server actions backed by Supabase service clients
 
 Core route groups:
 
-- `/api/workspaces`: internal camp create, update, invite, branding, custom domains.
-- `/api/spaces`: internal trail create, update access, manage members.
+- `/api/workspaces`: internal hub create, update, invite, branding, custom domains.
+- `/api/spaces`: internal room create, update access, manage members.
 - `/api/posts`: create, edit, archive, pin, schedule, list active feed.
 - `/api/comments`: reply, nest replies, mark decisions, quote.
 - `/api/tasks`: create from comments, assign, status updates, due dates.
@@ -100,8 +100,8 @@ Core route groups:
 All mutating APIs validate:
 
 - Auth session.
-- Camp membership.
-- Trail access.
+- Hub membership.
+- Room access.
 - Content state.
 - Rate limits.
 - Zod input schema.
@@ -119,7 +119,7 @@ On first login:
 
 1. Create `users` profile from Auth identity.
 2. If invitation token exists, attach membership.
-3. Otherwise create a personal trial camp.
+3. Otherwise create a personal trial hub.
 4. Redirect to active feed.
 
 Enterprise phase:
@@ -134,7 +134,7 @@ Supabase Realtime channels:
 
 - `workspace:{workspace_id}:feed`: post activity, pins, archives.
 - `post:{post_id}:thread`: comments, reactions, agent replies.
-- `user:{user_id}:notifications`: mentions, tasks, and camp updates.
+- `user:{user_id}:notifications`: mentions, tasks, and hub updates.
 - `workspace:{workspace_id}:presence`: online users and active agents.
 
 Activity bumping:
@@ -145,12 +145,12 @@ Activity bumping:
 
 ## 8. Future AI Architecture
 
-AI is intentionally out of scope for the current production shell. The database keeps future-ready tables so AI can be added later without redesigning camp permissions.
+AI is intentionally out of scope for the current production shell. The database keeps future-ready tables so AI can be added later without redesigning hub permissions.
 
 Agent lifecycle:
 
 1. User mentions or assigns an agent in a post.
-2. Server validates agent permissions for the post trail.
+2. Server validates agent permissions for the post room.
 3. Job is written to `ai_messages`.
 4. Worker builds thread context, respecting content permissions.
 5. Provider adapter calls the selected model provider.
@@ -162,8 +162,8 @@ Default agent templates will be defined when the AI layer is implemented.
 Memory:
 
 - Thread memory is scoped to the post.
-- Camp memory is explicit and admin-managed.
-- Agents never read restricted trails unless invited and permitted.
+- Hub memory is explicit and admin-managed.
+- Agents never read restricted rooms unless invited and permitted.
 
 ## 9. File Storage Architecture
 
@@ -188,14 +188,14 @@ Plans:
 - Free: small teams.
 - Pro: unlimited posts and collaboration history.
 - Business: SSO, audit logs, admin controls.
-- Enterprise: multi-camp, compliance, dedicated support.
+- Enterprise: multi-hub, compliance, dedicated support.
 
 Stripe integration:
 
 - Checkout for upgrades.
 - Customer portal for plan changes and invoices.
 - Webhooks write `subscriptions` and `billing_events`.
-- Future AI usage quotas should be enforced by camp plan and monthly usage counters.
+- Future AI usage quotas should be enforced by hub plan and monthly usage counters.
 
 ## 11. Security Model
 
@@ -205,7 +205,7 @@ Baseline controls:
 - Server-only service role key.
 - Short-lived signed upload URLs.
 - Zod input validation.
-- Per-user and per-camp rate limiting.
+- Per-user and per-hub rate limiting.
 - Audit logs for admin actions and future automated workers.
 - Encryption at rest through Supabase managed Postgres and Storage.
 - Least-privilege agent permissions.
@@ -257,16 +257,16 @@ Design direction:
 - Primary action color: deep earth `#8F4F2E`, with charcoal `#332722` for high-emphasis controls.
 - Accent warmth: parchment `#F6EAD4`, light paper `#FFFAF0`, and muted gold `#DFC9A4`.
 - Supporting contrast: restrained blues and teals only for system state, search, decisions, and knowledge surfaces.
-- Cultural motif layer: three-stars-and-sun logo geometry and low-opacity pre-colonial-inspired patterns. These should support the product atmosphere without overpowering core workflow clarity.
+- Visual motif layer: restrained grid texture and low-opacity accent lighting. These should support the product atmosphere without overpowering core workflow clarity.
 
-Primary camp layout:
+Primary hub layout:
 
 ```txt
 Left sidebar        Main feed                    Thread panel
-Camp switcher       Metrics                      Post title
+Hub switcher       Metrics                      Post title
 Navigation          Sort controls                Original post
-Trails              Active post list             Replies
-Camp tools          Search                       Thread composer
+Rooms              Active post list             Replies
+Hub tools          Search                       Thread composer
 ```
 
 Admin layout:
@@ -274,13 +274,13 @@ Admin layout:
 ```txt
 Settings nav        Security and billing panels  Audit log drawer
 Members             Agent permissions            Plan usage
-Trails              Integrations                 Domain/SSO
+Rooms              Integrations                 Domain/SSO
 ```
 
 Mobile layout:
 
 ```txt
-Top camp bar
+Top hub bar
 Search
 Sort tabs
 Post list
@@ -291,8 +291,8 @@ Thread opens as full-screen route or sheet
 
 Core components:
 
-- `AppShell`: camp chrome, theme, responsive layout.
-- `SpaceNav`: visible trails and access state.
+- `AppShell`: hub chrome, theme, responsive layout.
+- `SpaceNav`: visible rooms and access state.
 - `ActiveFeed`: ranking, filters, infinite scroll.
 - `PostCard`: status, tags, author, excerpt, activity metadata.
 - `ThreadPanel`: original post, comments, composer, agent assignment.
@@ -357,17 +357,17 @@ Unit tests:
 
 Integration tests:
 
-- Camp onboarding.
+- Hub onboarding.
 - Invite acceptance.
-- Trail access.
+- Room access.
 - Post/comment/task lifecycle.
 - Agent dispatch and audit records.
 - Stripe webhook idempotency.
 
 E2E tests:
 
-- Create camp.
-- Create private trail.
+- Create hub.
+- Create private room.
 - Create post and reply.
 - Reply in a thread.
 - Convert decision to knowledge doc.
@@ -384,10 +384,10 @@ Sentry:
 
 PostHog:
 
-- Activation: camp created, first post, first comment, first invite.
+- Activation: hub created, first post, first comment, first invite.
 - Collaboration: active posts, reply rate, decision logs.
 - Future AI: dispatch rate, completion latency, accepted outputs.
-- Retention: weekly active camps, search usage, notification opens.
+- Retention: weekly active hubs, search usage, notification opens.
 
 Operational alerts:
 

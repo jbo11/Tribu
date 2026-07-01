@@ -11,5 +11,5 @@ where full_name is null
    or nickname is null
    or trim(nickname) = '';
 
-comment on column public.users.full_name is 'Private administrative name shown to camp Chiefs and Admins.';
-comment on column public.users.nickname is 'Public name shown in Tribu conversations and collaborative surfaces.';
+comment on column public.users.full_name is 'Private administrative name shown to hub Owners and Admins.';
+comment on column public.users.nickname is 'Public name shown in TriCord conversations and collaborative surfaces.';

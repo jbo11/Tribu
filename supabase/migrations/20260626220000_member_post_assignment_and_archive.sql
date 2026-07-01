@@ -20,7 +20,7 @@ begin
     select 1 from public.memberships
     where workspace_id = target_post.workspace_id and user_id = target_user_id
   ) then
-    raise exception 'The selected assignee is not a member of this camp.';
+    raise exception 'The selected assignee is not a member of this hub.';
   end if;
 
   update public.posts
@@ -99,9 +99,9 @@ do $$
 begin
   if not exists (
     select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'link_previews' and policyname = 'Members read camp link previews'
+    where schemaname = 'public' and tablename = 'link_previews' and policyname = 'Members read hub link previews'
   ) then
-    create policy "Members read camp link previews"
+    create policy "Members read hub link previews"
     on public.link_previews for select
     using (public.is_workspace_member(workspace_id));
   end if;

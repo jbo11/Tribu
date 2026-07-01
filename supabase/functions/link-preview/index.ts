@@ -22,7 +22,7 @@ Deno.serve(async (request) => {
     if (authError || !authData.user) return json({ error: 'Authentication required.' }, 401);
 
     const body = await request.json() as { url?: string; workspaceId?: string };
-    if (!body.url || !body.workspaceId) return json({ error: 'URL and camp are required.' }, 400);
+    if (!body.url || !body.workspaceId) return json({ error: 'URL and hub are required.' }, 400);
     const targetUrl = validatePublicUrl(body.url);
 
     const { data: membership } = await userClient
@@ -31,7 +31,7 @@ Deno.serve(async (request) => {
       .eq('workspace_id', body.workspaceId)
       .eq('user_id', authData.user.id)
       .maybeSingle();
-    if (!membership) return json({ error: 'Camp access required.' }, 403);
+    if (!membership) return json({ error: 'Hub access required.' }, 403);
 
     const { data: cached } = await userClient
       .from('link_previews')
@@ -72,7 +72,7 @@ async function fetchHtml(initialUrl: URL) {
       const response = await fetch(currentUrl, {
         redirect: 'manual',
         signal: controller.signal,
-        headers: { 'User-Agent': 'Tribu Link Preview/1.0', Accept: 'text/html,application/xhtml+xml' },
+        headers: { 'User-Agent': 'TriCord Link Preview/1.0', Accept: 'text/html,application/xhtml+xml' },
       });
 
       if (response.status >= 300 && response.status < 400) {
@@ -113,10 +113,10 @@ async function readLimitedText(response: Response, limit: number) {
 function parseMetadata(html: string, pageUrl: URL) {
   const meta = new Map<string, string>();
   for (const tag of html.match(/<meta\s+[^>]*>/gi) ?? []) {
-    const attributes = new Map<string, string>();
-    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)) attributes.set(match[1].toLowerCase(), decodeHtml(match[2]));
-    const key = (attributes.get('property') ?? attributes.get('name') ?? '').toLowerCase();
-    const content = attributes.get('content');
+    const attricordtes = new Map<string, string>();
+    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)) attricordtes.set(match[1].toLowerCase(), decodeHtml(match[2]));
+    const key = (attricordtes.get('property') ?? attricordtes.get('name') ?? '').toLowerCase();
+    const content = attricordtes.get('content');
     if (key && content) meta.set(key, content);
   }
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);

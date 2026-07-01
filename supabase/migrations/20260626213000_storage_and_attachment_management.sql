@@ -64,9 +64,9 @@ begin
 
   if not exists (
     select 1 from pg_policies
-    where schemaname = 'storage' and tablename = 'objects' and policyname = 'Members read camp files'
+    where schemaname = 'storage' and tablename = 'objects' and policyname = 'Members read hub files'
   ) then
-    create policy "Members read camp files"
+    create policy "Members read hub files"
     on storage.objects for select to authenticated
     using (
       bucket_id = 'workspace-files'
@@ -76,9 +76,9 @@ begin
 
   if not exists (
     select 1 from pg_policies
-    where schemaname = 'storage' and tablename = 'objects' and policyname = 'Members upload camp files'
+    where schemaname = 'storage' and tablename = 'objects' and policyname = 'Members upload hub files'
   ) then
-    create policy "Members upload camp files"
+    create policy "Members upload hub files"
     on storage.objects for insert to authenticated
     with check (
       bucket_id = 'workspace-files'
@@ -89,9 +89,9 @@ begin
 
   if not exists (
     select 1 from pg_policies
-    where schemaname = 'storage' and tablename = 'objects' and policyname = 'Uploaders and admins delete camp files'
+    where schemaname = 'storage' and tablename = 'objects' and policyname = 'Uploaders and admins delete hub files'
   ) then
-    create policy "Uploaders and admins delete camp files"
+    create policy "Uploaders and admins delete hub files"
     on storage.objects for delete to authenticated
     using (
       bucket_id = 'workspace-files'

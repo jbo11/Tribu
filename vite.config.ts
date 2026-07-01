@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: process.env.GITHUB_PAGES === 'true' ? '/Tribu/' : '/',
+    base: process.env.GITHUB_PAGES === 'true' ? '/TriCord/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -3,6 +3,7 @@ import {
   Archive,
   ArchiveRestore,
   Bug,
+  Cable,
   Camera,
   CalendarDays,
   ChevronDown,
@@ -51,7 +52,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { type RealtimeChannel, type Session } from '@supabase/supabase-js';
-import tribuLogoUrl from './assets/tribu-logo.png';
 import { cn, formatTimeAgo } from './lib/utils';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import {
@@ -83,10 +83,10 @@ const sortOptions: { value: SortMode; label: string }[] = [
 ];
 
 const workspaceRoles: { role: WorkspaceRole; detail: string }[] = [
-  { role: 'owner', detail: 'Camp ownership, billing, security, and deletion.' },
-  { role: 'admin', detail: 'Members, trails, integrations, policies, and audit visibility.' },
-  { role: 'member', detail: 'Posts, replies, files, tasks, and camp search.' },
-  { role: 'guest', detail: 'Only invited trails and assigned work.' },
+  { role: 'owner', detail: 'Hub ownership, billing, security, and deletion.' },
+  { role: 'admin', detail: 'Members, rooms, integrations, policies, and audit visibility.' },
+  { role: 'member', detail: 'Posts, replies, files, tasks, and hub search.' },
+  { role: 'guest', detail: 'Only invited rooms and assigned work.' },
 ];
 
 const knowledgeCategories: { value: KnowledgeCategory; label: string }[] = [
@@ -98,14 +98,25 @@ const knowledgeCategories: { value: KnowledgeCategory; label: string }[] = [
   { value: 'sop', label: 'Standard operating procedure' },
 ];
 
-const INVITE_STORAGE_KEY = 'tribu_invite_token';
+const INVITE_STORAGE_KEY = 'tricord_invite_token';
 const BASIC_PROFILE_SELECT = 'id, email, display_name, avatar_url, timezone';
 const PROFILE_SELECT = 'id, email, display_name, full_name, nickname, avatar_url, timezone, phone, address, bio';
 const linkPreviewCache = new Map<string, AppLinkPreview>();
-const THREAD_WIDTH_STORAGE_KEY = 'tribu_thread_width';
-const THEME_STORAGE_KEY = 'tribu_theme';
-const CHAT_OPEN_STORAGE_KEY = 'tribu_chat_open';
+const THREAD_WIDTH_STORAGE_KEY = 'tricord_thread_width';
+const THEME_STORAGE_KEY = 'tricord_theme';
+const CHAT_OPEN_STORAGE_KEY = 'tricord_chat_open';
+const ACCENT_STORAGE_KEY = 'tricord_accent';
 const EmojiPicker = lazy(() => import('emoji-picker-react'));
+
+type AccentColor = 'tangerine' | 'violet' | 'blue' | 'teal' | 'rose';
+
+const accentPalettes: Record<AccentColor, { label: string; accent: string; strong: string; soft: string; muted: string; ink: string }> = {
+  tangerine: { label: 'Tangerine', accent: '#F97316', strong: '#C2410C', soft: '#FFEDD5', muted: '#FDBA74', ink: '#431407' },
+  violet: { label: 'Violet', accent: '#7C3AED', strong: '#5B21B6', soft: '#EDE9FE', muted: '#A78BFA', ink: '#2E1065' },
+  blue: { label: 'Blue', accent: '#2563EB', strong: '#1D4ED8', soft: '#DBEAFE', muted: '#60A5FA', ink: '#172554' },
+  teal: { label: 'Teal', accent: '#0D9488', strong: '#0F766E', soft: '#CCFBF1', muted: '#5EEAD4', ink: '#042F2E' },
+  rose: { label: 'Rose', accent: '#E11D48', strong: '#BE123C', soft: '#FFE4E6', muted: '#FB7185', ink: '#4C0519' },
+};
 
 interface ForwardableMessage {
   body: string;
@@ -116,6 +127,7 @@ type AccountModalView = 'personalization' | 'profile' | 'settings' | 'help' | 'a
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
+  const [accentColor, setAccentColor] = useState<AccentColor>(getInitialAccentColor);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [view, setView] = useState<ViewMode>('feed');
@@ -174,6 +186,17 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    const palette = accentPalettes[accentColor];
+    const root = document.documentElement;
+    root.style.setProperty('--accent', palette.accent);
+    root.style.setProperty('--accent-strong', palette.strong);
+    root.style.setProperty('--accent-soft', palette.soft);
+    root.style.setProperty('--accent-muted', palette.muted);
+    root.style.setProperty('--accent-ink', palette.ink);
+    window.localStorage.setItem(ACCENT_STORAGE_KEY, accentColor);
+  }, [accentColor]);
 
   useEffect(() => {
     window.localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOnOtherPages));
@@ -609,7 +632,7 @@ export default function App() {
   }
 
   return (
-    <div className={cn('relative h-dvh overflow-hidden font-sans', theme === 'dark' ? 'bg-[#201815] text-[#FFF7E8]' : 'bg-[#F6EAD4] text-[#211A16]')}>
+    <div className={cn('relative h-dvh overflow-hidden font-sans', theme === 'dark' ? 'bg-[#0C0B10] text-[#FAF9FC]' : 'bg-[#F5F4F7] text-[#17151D]')}>
       <AmbientMotifs theme={theme} />
       <div className="relative z-10 grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
         <Sidebar
@@ -637,7 +660,7 @@ export default function App() {
         />
 
         <main className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
-          <header className={cn('shrink-0 border-b px-4 py-4 md:px-6', theme === 'dark' ? 'border-white/10 bg-[#201815]/85' : 'border-[#DFC9A4] bg-[#FFFAF0]/80')}>
+          <header className={cn('shrink-0 border-b px-4 py-4 md:px-6', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]/85' : 'border-[#E7E3EA] bg-[#FFFFFF]/80')}>
             <div className="flex items-center gap-3">
               <button
                 aria-label="Open navigation"
@@ -647,8 +670,8 @@ export default function App() {
                 <Menu className="h-4 w-4" />
               </button>
               <div className="min-w-0 flex-1">
-                <p className={cn('truncate text-xs font-semibold uppercase tracking-[0.24em]', muted(theme))}>Camp</p>
-                <h1 className="truncate text-2xl font-bold tracking-tight md:text-3xl">{selectedWorkspace?.name ?? 'Tribu'}</h1>
+                <p className={cn('truncate text-xs font-semibold uppercase tracking-[0.24em]', muted(theme))}>Hub</p>
+                <h1 className="truncate text-2xl font-bold tracking-tight md:text-3xl">{selectedWorkspace?.name ?? 'TriCord'}</h1>
               </div>
               <label className={cn('hidden h-11 w-[min(28vw,360px)] items-center gap-2 rounded-lg border px-3 md:flex', surface(theme))}>
                 <Search className={cn('h-4 w-4 shrink-0', muted(theme))} />
@@ -661,7 +684,7 @@ export default function App() {
               </label>
               <button
                 onClick={() => setComposerOpen(true)}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#332722] px-4 text-sm font-semibold text-[#FFF7E8] shadow-lg shadow-[#332722]/20 transition hover:bg-[#211A16]"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#17151D] px-4 text-sm font-semibold text-[#FAF9FC] shadow-lg shadow-[#17151D]/20 transition hover:bg-[#17151D]"
               >
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline">New post</span>
@@ -689,7 +712,7 @@ export default function App() {
           >
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-5 md:px-6">
               {notice && (
-                <div className="mb-4 rounded-lg border border-[#E9B93E] bg-[#FFF3C4] px-4 py-3 text-sm text-[#8F4F2E]">
+                <div className="mb-4 rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent-strong)]">
                   {notice}
                 </div>
               )}
@@ -752,7 +775,7 @@ export default function App() {
                         theme={theme}
                         icon={Inbox}
                         title="No posts yet"
-                        body="Create the first post for this camp. New activity will stay grouped here instead of disappearing into channels."
+                        body="Create the first post for this hub. New activity will stay grouped here instead of disappearing into channels."
                         actionLabel="Create post"
                         onAction={() => setComposerOpen(true)}
                       />
@@ -996,6 +1019,8 @@ export default function App() {
           section={accountModal}
           theme={theme}
           setTheme={setTheme}
+          accentColor={accentColor}
+          setAccentColor={setAccentColor}
           chatOpen={chatOnOtherPages}
           setChatOpen={(open) => {
             setChatOnOtherPages(open);
@@ -1028,17 +1053,15 @@ function AmbientMotifs({ theme }: { theme: 'light' | 'dark' }) {
     <div className="pointer-events-none absolute inset-0 overflow-hidden">
       <div className={cn('absolute inset-0', theme === 'dark' ? 'opacity-20' : 'opacity-70')} style={{
         backgroundImage:
-          'linear-gradient(90deg, rgba(33,26,22,0.035) 1px, transparent 1px), linear-gradient(rgba(33,26,22,0.035) 1px, transparent 1px), radial-gradient(circle at 78% 8%, rgba(233,185,62,0.22), transparent 22rem)',
+          'linear-gradient(90deg, rgba(39,34,47,0.035) 1px, transparent 1px), linear-gradient(rgba(39,34,47,0.035) 1px, transparent 1px), radial-gradient(circle at 78% 8%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 22rem)',
         backgroundSize: '36px 36px, 36px 36px, auto',
       }} />
     </div>
   );
 }
 
-function TribuLogo({ className = '' }: { className?: string }) {
-  return (
-    <img src={tribuLogoUrl} alt="" className={cn('object-contain mix-blend-multiply', className)} aria-hidden="true" />
-  );
+function TriCordLogo({ className = '' }: { className?: string }) {
+  return <Cable className={cn('stroke-[2.4]', className)} aria-hidden="true" />;
 }
 
 function Sidebar({
@@ -1080,11 +1103,11 @@ function Sidebar({
 }) {
   const currentRole = workspaces.find((workspace) => workspace.id === workspaceId)?.role;
   const canManageSpaces = currentRole === 'owner' || currentRole === 'admin';
-  const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'camp';
+  const currentRoleLabel = currentRole ? getRoleLabel(currentRole) : 'hub';
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
-  const accountName = getProfileName(profile, email.split('@')[0] || 'Camp member');
+  const accountName = getProfileName(profile, email.split('@')[0] || 'Hub member');
   const planLabel = plan.charAt(0).toUpperCase() + plan.slice(1);
 
   useEffect(() => {
@@ -1112,17 +1135,17 @@ function Sidebar({
         className={cn(
           'fixed inset-y-0 left-0 z-50 flex h-dvh w-[280px] flex-col overflow-visible border-r px-4 py-5 transition-transform lg:static lg:z-auto lg:translate-x-0',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full',
-          theme === 'dark' ? 'border-white/10 bg-[#201815]/95' : 'border-[#DFC9A4] bg-[#332722]',
+          theme === 'dark' ? 'border-white/10 bg-[#111018]' : 'border-[#E7E3EA] bg-white',
         )}
       >
         <div className="mb-5 flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E9B93E] text-[#211A16] shadow-lg shadow-[#8F4F2E]/20">
-              <TribuLogo className="h-9 w-9" />
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-[var(--accent-ink)] shadow-lg shadow-[var(--accent-strong)]/20">
+              <TriCordLogo className="h-9 w-9" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-xl font-bold tracking-tight text-[#FFF7E8]">Tribu</p>
-              <p className="truncate text-xs text-[#DFC9A4]">{currentRoleLabel}</p>
+              <p className={cn('truncate text-xl font-bold tracking-tight', theme === 'dark' ? 'text-[#FAF9FC]' : 'text-[#17151D]')}>TriCord</p>
+              <p className={cn('truncate text-xs', muted(theme))}>{currentRoleLabel}</p>
             </div>
           </div>
           <button aria-label="Close navigation" onClick={onClose} className={cn('rounded-lg border p-2 lg:hidden', subtleButton(theme))}>
@@ -1138,10 +1161,10 @@ function Sidebar({
         </nav>
 
         <section className="mt-7 min-h-0 overflow-hidden">
-          <div className="mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#DFC9A4]">
-            Trails
+          <div className={cn('mb-3 flex items-center justify-between px-2 text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>
+            Rooms
             {canManageSpaces && (
-              <button aria-label="Create trail" onClick={onCreateSpace} className="rounded p-1 hover:bg-[#FFF7E8]/10">
+              <button aria-label="Create room" onClick={onCreateSpace} className={cn('rounded p-1', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#F0EDF3]')}>
                 <Plus className="h-3.5 w-3.5" />
               </button>
             )}
@@ -1149,7 +1172,7 @@ function Sidebar({
           <div className="space-y-2">
             <button
               onClick={() => onSpaceChange('all')}
-              className={cn('w-full rounded-lg border p-3 text-left text-sm font-semibold transition', activeSpaceId === 'all' ? 'border-[#E9B93E] bg-[#E9B93E]/25 text-[#FFF7E8]' : 'border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-[#FFF7E8]')}
+              className={cn('w-full rounded-lg border p-3 text-left text-sm font-semibold transition', activeSpaceId === 'all' ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
             >
               All posts
             </button>
@@ -1157,13 +1180,13 @@ function Sidebar({
               <button
                 key={space.id}
                 onClick={() => onSpaceChange(space.id)}
-                className={cn('w-full rounded-lg border p-3 text-left transition', activeSpaceId === space.id ? 'border-[#E9B93E] bg-[#E9B93E]/25 text-[#FFF7E8]' : 'border-[#FFF7E8]/15 bg-[#FFF7E8]/8 text-[#FFF7E8]')}
+                className={cn('w-full rounded-lg border p-3 text-left transition', activeSpaceId === space.id ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]' : theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC]' : 'border-[#E7E3EA] bg-white text-[#3D3744] hover:bg-[#F7F6F9]')}
               >
                 <div className="flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-[#E9B93E]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
                   <span className="truncate text-sm font-semibold">{space.name}</span>
                 </div>
-                <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[#F7D774]' : 'text-[#DFC9A4]')}>{getTrailAccessLabel(space.access)} trail</p>
+                <p className={cn('mt-1 text-xs capitalize', activeSpaceId === space.id ? 'text-[var(--accent-strong)]' : muted(theme))}>{getRoomAccessLabel(space.access)} room</p>
               </button>
             ))}
           </div>
@@ -1171,12 +1194,12 @@ function Sidebar({
 
         <div ref={accountMenuRef} className="relative mt-auto pt-4">
           {accountMenuOpen && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[70] rounded-lg border border-white/10 bg-[#2A2421] p-2 text-[#FFF7E8] shadow-2xl">
+            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[70] rounded-lg border border-white/10 bg-[#17151D] p-2 text-[#FAF9FC] shadow-2xl">
               <div className="flex items-center gap-3 border-b border-white/10 px-2 pb-3 pt-1">
                 <Avatar profile={profile} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold">{accountName}</p>
-                  <p className="text-xs text-[#BFB3A4]">{planLabel}</p>
+                  <p className="text-xs text-[#AAA4B3]">{planLabel}</p>
                 </div>
               </div>
               <div className="mt-2 grid gap-1">
@@ -1184,17 +1207,17 @@ function Sidebar({
                 <AccountMenuButton icon={User} label="Profile" onClick={() => openAccountView('profile')} />
                 <AccountMenuButton icon={Settings} label="Settings" onClick={() => openAccountView('settings')} />
                 <div className="relative">
-                  <AccountMenuButton icon={CircleHelp} label="Help" trailing={ChevronRight} active={helpMenuOpen} onClick={() => setHelpMenuOpen((open) => !open)} />
+                  <AccountMenuButton icon={CircleHelp} label="Help" rooming={ChevronRight} active={helpMenuOpen} onClick={() => setHelpMenuOpen((open) => !open)} />
                   {helpMenuOpen && (
                     <>
                       <div className="mt-1 grid gap-1 border-t border-white/10 pt-1 lg:hidden">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
-                        <AccountMenuButton icon={Info} label="About Tribu" onClick={() => openAccountView('about')} />
+                        <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
-                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#2A2421] p-2 shadow-2xl lg:grid">
+                      <div className="absolute bottom-0 left-[calc(100%+0.75rem)] hidden w-56 gap-1 rounded-lg border border-white/10 bg-[#17151D] p-2 shadow-2xl lg:grid">
                         <AccountMenuButton icon={CircleHelp} label="Help center" onClick={() => openAccountView('help')} />
-                        <AccountMenuButton icon={Info} label="About Tribu" onClick={() => openAccountView('about')} />
+                        <AccountMenuButton icon={Info} label="About TriCord" onClick={() => openAccountView('about')} />
                         <AccountMenuButton icon={Bug} label="Report a problem" onClick={() => openAccountView('report')} />
                       </div>
                     </>
@@ -1213,12 +1236,12 @@ function Sidebar({
               setAccountMenuOpen((open) => !open);
               setHelpMenuOpen(false);
             }}
-            className="flex w-full items-center gap-3 rounded-lg border border-[#FFF7E8]/15 bg-[#FFF7E8]/8 p-2 text-left text-[#FFF7E8] transition hover:bg-[#FFF7E8]/12"
+            className={cn('flex w-full items-center gap-3 rounded-lg border p-2 text-left transition', theme === 'dark' ? 'border-white/15 bg-white/[0.06] text-[#FAF9FC] hover:bg-white/10' : 'border-[#E7E3EA] bg-[#F7F6F9] text-[#17151D] hover:bg-[#F0EDF3]')}
           >
             <Avatar profile={profile} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold">{accountName}</p>
-              <p className="text-xs text-[#DFC9A4]">{planLabel}</p>
+              <p className={cn('text-xs', muted(theme))}>{planLabel}</p>
             </div>
             <ChevronRight className={cn('h-4 w-4 shrink-0 transition-transform', accountMenuOpen && '-rotate-90')} />
           </button>
@@ -1257,7 +1280,7 @@ function SortBar({ sort, setSort, theme }: { sort: SortMode; setSort: (sort: Sor
         <button
           key={option.value}
           onClick={() => setSort(option.value)}
-          className={cn('h-9 rounded-md px-3 text-sm font-semibold transition', sort === option.value ? 'bg-[#E9B93E] text-[#211A16] shadow-sm' : cn(muted(theme), 'hover:bg-[#FFF3C4]'))}
+          className={cn('h-9 rounded-md px-3 text-sm font-semibold transition', sort === option.value ? 'bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm' : cn(muted(theme), 'hover:bg-[var(--accent-soft)]'))}
         >
           {option.label}
         </button>
@@ -1301,11 +1324,11 @@ function PostRow({
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onClick();
       }}
-      className={cn('w-full rounded-lg border p-4 text-left transition', selected ? 'border-[#E9B93E] shadow-lg shadow-[#8F4F2E]/15' : surface(theme))}
+      className={cn('w-full rounded-lg border p-4 text-left transition', selected ? 'border-[var(--accent)] shadow-lg shadow-[var(--accent-strong)]/15' : surface(theme))}
     >
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill state={post.state} />
-        {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#DFC9A4]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
+        {space && <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', theme === 'dark' ? 'bg-white/10 text-[#B8B3C2]' : 'bg-[#E4F1F3] text-[#185C74]')}>{space.name}</span>}
         <span className={cn('ml-auto text-xs', muted(theme))}>{formatTimeAgo(post.last_activity_at)}</span>
       </div>
       <h2 className="mt-3 text-lg font-bold tracking-tight">{post.title}</h2>
@@ -1486,8 +1509,8 @@ function ThreadPanel({
     const input = fileInputRef.current;
     if (!input) return;
     input.accept = accept;
-    if (capture) input.setAttribute('capture', 'environment');
-    else input.removeAttribute('capture');
+    if (capture) input.setAttricordte('capture', 'environment');
+    else input.removeAttricordte('capture');
     input.click();
   };
 
@@ -1507,7 +1530,7 @@ function ThreadPanel({
 
   if (!post) {
     return (
-      <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
+      <aside className={cn('relative hidden min-h-0 overflow-hidden border-l p-6 xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#121017]/55' : 'border-[#E7E3EA] bg-[#FFFFFF]/45')}>
         <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
         {canClose && <button
           type="button"
@@ -1524,7 +1547,7 @@ function ThreadPanel({
   }
 
   return (
-    <aside className={cn('relative hidden min-h-0 overflow-hidden border-l xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#241A13]/55' : 'border-[#DFC9A4] bg-[#FFFAF0]/45')}>
+    <aside className={cn('relative hidden min-h-0 overflow-hidden border-l xl:flex xl:flex-col', theme === 'dark' ? 'border-white/10 bg-[#121017]/55' : 'border-[#E7E3EA] bg-[#FFFFFF]/45')}>
       <ThreadResizeHandle theme={theme} width={width} onWidthChange={onWidthChange} />
       <div className="shrink-0 border-b border-inherit p-5">
         <div className="flex items-start justify-between gap-3">
@@ -1594,15 +1617,15 @@ function ThreadPanel({
       </div>
 
       {forwarding && (
-        <div className={cn('flex shrink-0 items-center gap-3 border-t p-4', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}>
+        <div className={cn('flex shrink-0 items-center gap-3 border-t p-4', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#F5F4F7]')}>
           <button type="button" onClick={() => { setForwarding(false); setSelectedMessageIds(new Set()); }} className={cn('h-10 rounded-lg border px-3 text-sm font-semibold', subtleButton(theme))}>Cancel</button>
           <span className={cn('text-sm', muted(theme))}>{selectedMessageIds.size} selected</span>
-          <button type="button" disabled={selectedMessageIds.size === 0} onClick={() => setForwardModalOpen(true)} className="ml-auto inline-flex h-10 items-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:opacity-50"><Share2 className="h-4 w-4" />Forward</button>
+          <button type="button" disabled={selectedMessageIds.size === 0} onClick={() => setForwardModalOpen(true)} className="ml-auto inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:opacity-50"><Share2 className="h-4 w-4" />Forward</button>
         </div>
       )}
 
       <form
-        className={cn('shrink-0 border-t p-4', forwarding && 'hidden', dragActive && 'ring-2 ring-inset ring-[#E9B93E]', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#F6EAD4]')}
+        className={cn('shrink-0 border-t p-4', forwarding && 'hidden', dragActive && 'ring-2 ring-inset ring-[var(--accent)]', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#F5F4F7]')}
         onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
         onDragLeave={(event) => { event.preventDefault(); if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
@@ -1669,7 +1692,7 @@ function ThreadPanel({
             ))}
           </div>
         )}
-        {dragActive && <p className="mt-2 text-center text-sm font-semibold text-[#8F4F2E]">Drop files to attach</p>}
+        {dragActive && <p className="mt-2 text-center text-sm font-semibold text-[var(--accent-strong)]">Drop files to attach</p>}
         {error && <p className="mt-2 text-sm font-semibold text-[#B91C1C]">{error}</p>}
         <div className="mt-3 flex items-center gap-3">
           <div ref={attachmentMenuRef} className="relative">
@@ -1697,7 +1720,7 @@ function ThreadPanel({
               />
             )}
           </div>
-          <button disabled={submitting || (!reply.trim() && files.length === 0)} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          <button disabled={submitting || (!reply.trim() && files.length === 0)} className="ml-auto inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             Reply
           </button>
@@ -1756,7 +1779,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
         </div>
       </div>
       {parentComment && (
-        <div className={cn('mb-3 border-l-2 border-[#E9B93E] pl-3 text-xs', muted(theme))}>
+        <div className={cn('mb-3 border-l-2 border-[var(--accent)] pl-3 text-xs', muted(theme))}>
           <strong>{parentComment.body ? parentComment.body.slice(0, 90) : 'Attachment'}</strong>
         </div>
       )}
@@ -1777,7 +1800,7 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
       )}
       <div className="mt-3 flex min-h-7 flex-wrap items-end gap-2">
         {reactionGroups.map((group) => (
-          <button key={group.emoji} type="button" onClick={() => void runAction(() => onReact(group.emoji))} className={cn('inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs', group.userIds.includes(currentUserId) ? 'border-[#E9B93E] bg-[#FFF3C4] text-[#211A16]' : subtleButton(theme))}>
+          <button key={group.emoji} type="button" onClick={() => void runAction(() => onReact(group.emoji))} className={cn('inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs', group.userIds.includes(currentUserId) ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[#17151D]' : subtleButton(theme))}>
             <span>{group.emoji}</span><span>{group.count}</span>
           </button>
         ))}
@@ -1808,12 +1831,12 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
               });
               setMenuOpen(true);
             }}
-            className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}
+            className={cn('inline-flex h-7 w-7 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[var(--accent-soft)]')}
           >
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
           {menuOpen && (
-            <div style={menuPosition} className={cn('fixed z-[90] w-48 rounded-lg border p-1.5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+            <div style={menuPosition} className={cn('fixed z-[90] w-48 rounded-lg border p-1.5 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <MessageMenuButton icon={ReplyIcon} label="Reply" onClick={() => { onReply(); setMenuOpen(false); }} />
               <MessageMenuButton icon={Copy} label="Copy" onClick={() => { void navigator.clipboard.writeText(body); setMenuOpen(false); }} />
               <MessageMenuButton icon={Smile} label="React" onClick={() => { setReactionPickerOpen(true); setMenuOpen(false); }} />
@@ -1825,10 +1848,10 @@ function ThreadCard({ profile, body, timestamp, theme, workspaceId, attachments 
       </div>
       {reactionPickerOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 p-4" onClick={() => setReactionPickerOpen(false)}>
-          <div className={cn('w-full max-w-sm overflow-hidden rounded-lg border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')} onClick={(event) => event.stopPropagation()}>
+          <div className={cn('w-full max-w-sm overflow-hidden rounded-lg border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')} onClick={(event) => event.stopPropagation()}>
             <div className="flex h-12 items-center justify-between border-b border-inherit px-4">
               <span className="text-sm font-bold">Choose a reaction</span>
-              <button type="button" aria-label="Close emoji picker" title="Close" onClick={() => setReactionPickerOpen(false)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}><X className="h-4 w-4" /></button>
+              <button type="button" aria-label="Close emoji picker" title="Close" onClick={() => setReactionPickerOpen(false)} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[var(--accent-soft)]')}><X className="h-4 w-4" /></button>
             </div>
             <Suspense fallback={<div className="flex h-96 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>}>
               <EmojiPicker
@@ -1878,7 +1901,7 @@ function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 
         if (event.key === 'ArrowLeft') { event.preventDefault(); onWidthChange(width + 2); }
         if (event.key === 'ArrowRight') { event.preventDefault(); onWidthChange(width - 2); }
       }}
-      className={cn('absolute inset-y-0 left-0 z-40 w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[#E9B93E]' : 'after:bg-[#DFC9A4] hover:after:bg-[#8F4F2E]')}
+      className={cn('absolute inset-y-0 left-0 z-40 w-2 -translate-x-1 cursor-col-resize touch-none outline-none transition after:absolute after:inset-y-0 after:left-1/2 after:w-px after:transition hover:after:w-0.5 focus:after:w-0.5', theme === 'dark' ? 'after:bg-white/20 hover:after:bg-[var(--accent)]' : 'after:bg-[#B8B3C2] hover:after:bg-[var(--accent-strong)]')}
     />
   );
 }
@@ -1886,7 +1909,7 @@ function ThreadResizeHandle({ theme, width, onWidthChange }: { theme: 'light' | 
 function MessageSelectionCheckbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
   return (
     <label className="mt-4 inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center">
-      <input type="checkbox" checked={checked} onChange={onChange} aria-label="Select message to forward" className="h-4 w-4 accent-[#8F4F2E]" />
+      <input type="checkbox" checked={checked} onChange={onChange} aria-label="Select message to forward" className="h-4 w-4 accent-[var(--accent-strong)]" />
     </label>
   );
 }
@@ -1900,7 +1923,7 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
 
   return (
     <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className={cn('flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-lg border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')} onClick={(event) => event.stopPropagation()}>
+      <div className={cn('flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-lg border shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')} onClick={(event) => event.stopPropagation()}>
         <div className="flex h-14 shrink-0 items-center gap-3 border-b border-inherit px-4">
           <button type="button" aria-label="Close forward dialog" title="Close" onClick={onClose}><X className="h-5 w-5" /></button>
           <div><p className="font-bold">Forward messages</p><p className={cn('text-xs', muted(theme))}>{messageCount} selected</p></div>
@@ -1916,7 +1939,7 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
           {visiblePosts.length === 0 ? (
             <p className={cn('p-6 text-center text-sm', muted(theme))}>No available discussions.</p>
           ) : visiblePosts.map((post) => (
-            <label key={post.id} className={cn('flex cursor-pointer items-center gap-3 rounded-lg p-3', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+            <label key={post.id} className={cn('flex cursor-pointer items-center gap-3 rounded-lg p-3', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[var(--accent-soft)]')}>
               <input
                 type="checkbox"
                 checked={selectedPostIds.has(post.id)}
@@ -1925,9 +1948,9 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
                   if (next.has(post.id)) next.delete(post.id); else next.add(post.id);
                   return next;
                 })}
-                className="h-4 w-4 accent-[#8F4F2E]"
+                className="h-4 w-4 accent-[var(--accent-strong)]"
               />
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#FFF3C4] text-[#8F4F2E]"><MessageSquare className="h-4 w-4" /></span>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]"><MessageSquare className="h-4 w-4" /></span>
               <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{post.title}</span><span className={cn('block text-xs', muted(theme))}>Active {formatTimeAgo(post.last_activity_at)}</span></span>
             </label>
           ))}
@@ -1941,7 +1964,7 @@ function ForwardMessagesModal({ theme, posts, messageCount, onClose, onForward }
               setError('');
               try { await onForward([...selectedPostIds]); } catch (caughtError) { setError(getErrorMessage(caughtError)); setSubmitting(false); }
             }}
-            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:opacity-50"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
             Forward to {selectedPostIds.size || ''} discussion{selectedPostIds.size === 1 ? '' : 's'}
@@ -1964,9 +1987,9 @@ function AttachmentMenu({ theme, cameraAvailable, onDocument, onMedia, onCamera,
     { label: 'Archive', icon: Archive, action: onArchive, color: 'text-[#64748B]' },
   ];
   return (
-    <div className={cn('absolute bottom-12 left-0 z-40 w-56 rounded-lg border p-2 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+    <div className={cn('absolute bottom-12 left-0 z-40 w-56 rounded-lg border p-2 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
       {items.map(({ label, icon: Icon, action, color, disabled }) => (
-        <button key={label} type="button" disabled={disabled} title={disabled ? 'No camera detected' : undefined} onClick={action} className={cn('flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[#FFF3C4]')}>
+        <button key={label} type="button" disabled={disabled} title={disabled ? 'No camera detected' : undefined} onClick={action} className={cn('flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40', theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-[var(--accent-soft)]')}>
           <Icon className={cn('h-4 w-4', color)} />
           {label}
         </button>
@@ -2012,7 +2035,7 @@ function LinkPreviewCard({ url, workspaceId, theme }: { url: string; workspaceId
 
   if (!preview) return null;
   return (
-    <a href={preview.url} target="_blank" rel="noreferrer" className={cn('grid overflow-hidden rounded-lg border transition hover:border-[#E9B93E]', preview.image && 'grid-cols-[96px_minmax(0,1fr)]', subtleButton(theme))}>
+    <a href={preview.url} target="_blank" rel="noreferrer" className={cn('grid overflow-hidden rounded-lg border transition hover:border-[var(--accent)]', preview.image && 'grid-cols-[96px_minmax(0,1fr)]', subtleButton(theme))}>
       {preview.image && <img src={preview.image} alt="" className="h-full min-h-24 w-24 object-cover" />}
       <span className="min-w-0 p-3">
         <span className={cn('flex items-center gap-1.5 text-xs font-semibold', muted(theme))}><Globe2 className="h-3.5 w-3.5" />{preview.site_name}</span>
@@ -2084,11 +2107,11 @@ function TasksView({
     <StaticPanel theme={theme} title="Tasks" icon={ClipboardList}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className={cn('inline-flex rounded-lg border p-1', surface(theme))}>
-          {tabs.map(({ value, label, icon: Icon }) => <button key={value} onClick={() => setMode(value)} className={cn('inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition', mode === value ? 'bg-[#E9B93E] text-[#211A16] shadow-sm' : muted(theme))}><Icon className="h-4 w-4" />{label}</button>)}
+          {tabs.map(({ value, label, icon: Icon }) => <button key={value} onClick={() => setMode(value)} className={cn('inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition', mode === value ? 'bg-[var(--accent)] text-[var(--accent-ink)] shadow-sm' : muted(theme))}><Icon className="h-4 w-4" />{label}</button>)}
         </div>
-        <button onClick={onCreateTask} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New task</button>
+        <button onClick={onCreateTask} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New task</button>
       </div>
-      {tasks.length === 0 ? <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create the first task to start planning camp projects." actionLabel="Create task" onAction={onCreateTask} /> : mode === 'board' ? (
+      {tasks.length === 0 ? <EmptyState theme={theme} icon={ClipboardList} title="No tasks yet" body="Create the first task to start planning hub projects." actionLabel="Create task" onAction={onCreateTask} /> : mode === 'board' ? (
         <TaskBoard tasks={filteredTasks} profiles={profiles} theme={theme} onCreateTask={onCreateTask} onStatusChange={onStatusChange} />
       ) : mode === 'list' ? (
         <TaskList tasks={filteredTasks} profiles={profiles} theme={theme} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} priorityFilter={priorityFilter} setPriorityFilter={setPriorityFilter} canManageTaskActions={canManageTaskActions} onStatusChange={onStatusChange} onEditTask={onEditTask} onDeleteTask={onDeleteTask} onArchiveTask={onArchiveTask} />
@@ -2113,10 +2136,10 @@ function TaskBoard({ tasks, profiles, theme, onCreateTask, onStatusChange }: { t
       <div className="grid min-w-max grid-flow-col auto-cols-[280px] gap-4">
         {taskColumns.map((column) => {
           const columnTasks = tasks.filter((task) => task.status === column.status);
-          return <section key={column.status} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const taskId = event.dataTransfer.getData('text/tribu-task'); if (taskId) void onStatusChange(taskId, column.status); }}>
+          return <section key={column.status} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const taskId = event.dataTransfer.getData('text/tricord-task'); if (taskId) void onStatusChange(taskId, column.status); }}>
             <div className="mb-3 flex items-center gap-2 px-1"><span className={cn('h-2.5 w-2.5 rounded-full', column.dot)} /><h3 className="text-sm font-bold">{column.label}</h3><span className={cn('ml-auto rounded-full px-2 py-0.5 text-xs', theme === 'dark' ? 'bg-white/10' : 'bg-[#EDF2F7]', muted(theme))}>{columnTasks.length}</span></div>
             <div className="space-y-3">
-              {columnTasks.map((task) => <div key={task.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/tribu-task', task.id); }} className={cn('cursor-grab rounded-lg border p-4 shadow-sm active:cursor-grabbing', surface(theme))}>
+              {columnTasks.map((task) => <div key={task.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/tricord-task', task.id); }} className={cn('cursor-grab rounded-lg border p-4 shadow-sm active:cursor-grabbing', surface(theme))}>
                 <p className="font-semibold">{task.title}</p>{task.description && <p className={cn('mt-1 line-clamp-2 text-xs leading-5', muted(theme))}>{task.description}</p>}
                 <div className="mt-3 flex flex-wrap gap-1.5"><PriorityPill priority={task.priority ?? 'medium'} />{(task.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className={cn('rounded-full px-2 py-1 text-[11px]', theme === 'dark' ? 'bg-white/10' : 'bg-[#EDF2F7]')}>{tag}</span>)}</div>
                 <div className="mt-4 flex items-center gap-2"><Avatar profile={task.assignee_id ? profiles[task.assignee_id] : undefined} /><span className={cn('min-w-0 flex-1 truncate text-xs', muted(theme))}>{task.project_name || 'General project'}</span>{task.due_at && <span className={cn('text-[11px]', muted(theme))}>{formatTaskDate(task.due_at)}</span>}</div>
@@ -2141,7 +2164,7 @@ function TaskCalendar({ tasks, profiles, theme }: { tasks: AppTask[]; profiles: 
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()));
   const days = buildCalendarDays(month);
   const selectedTasks = tasks.filter((task) => task.due_at && toTaskDateKey(task.due_at) === selectedDate);
-  return <div><div className="mb-4 flex items-center justify-between"><button aria-label="Previous month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><ChevronLeft className="h-4 w-4" /></button><h3 className="font-bold">{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3><button aria-label="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><ChevronRight className="h-4 w-4" /></button></div><div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.7fr)]"><div className={cn('overflow-hidden rounded-lg border', surface(theme))}><div className="grid grid-cols-7 border-b border-inherit">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day) => <div key={day} className={cn('p-2 text-center text-xs font-semibold', muted(theme))}>{day}</div>)}</div><div className="grid grid-cols-7">{days.map((day) => { const key = toDateKey(day); const dayTasks = tasks.filter((task) => task.due_at && toTaskDateKey(task.due_at) === key); const inMonth = day.getMonth() === month.getMonth(); return <button key={key} onClick={() => setSelectedDate(key)} className={cn('relative min-h-24 border-b border-r border-inherit p-2 text-left align-top transition', !inMonth && 'opacity-40', selectedDate === key && 'ring-2 ring-inset ring-[#E9B93E]')}><span className="text-xs font-semibold">{day.getDate()}</span><div className="mt-2 space-y-1">{dayTasks.slice(0, 2).map((task) => <span key={task.id} className="block truncate rounded bg-[#FFF3C4] px-1.5 py-1 text-[10px] text-[#8F4F2E]">{task.title}</span>)}{dayTasks.length > 2 && <span className={cn('text-[10px]', muted(theme))}>+{dayTasks.length - 2} more</span>}</div></button>; })}</div></div><aside className={cn('rounded-lg border p-4', surface(theme))}><h3 className="font-bold">{new Date(`${selectedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3><p className={cn('mt-1 text-xs', muted(theme))}>{selectedTasks.length} task{selectedTasks.length === 1 ? '' : 's'}</p><div className="mt-4 space-y-3">{selectedTasks.map((task) => <div key={task.id} className="border-l-2 border-[#E9B93E] pl-3"><p className="text-sm font-semibold">{task.title}</p><p className={cn('text-xs', muted(theme))}>{task.project_name || 'General'} · {task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p></div>)}{selectedTasks.length === 0 && <p className={cn('py-10 text-center text-sm', muted(theme))}>No tasks for this date.</p>}</div></aside></div></div>;
+  return <div><div className="mb-4 flex items-center justify-between"><button aria-label="Previous month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><ChevronLeft className="h-4 w-4" /></button><h3 className="font-bold">{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3><button aria-label="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><ChevronRight className="h-4 w-4" /></button></div><div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.7fr)]"><div className={cn('overflow-hidden rounded-lg border', surface(theme))}><div className="grid grid-cols-7 border-b border-inherit">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day) => <div key={day} className={cn('p-2 text-center text-xs font-semibold', muted(theme))}>{day}</div>)}</div><div className="grid grid-cols-7">{days.map((day) => { const key = toDateKey(day); const dayTasks = tasks.filter((task) => task.due_at && toTaskDateKey(task.due_at) === key); const inMonth = day.getMonth() === month.getMonth(); return <button key={key} onClick={() => setSelectedDate(key)} className={cn('relative min-h-24 border-b border-r border-inherit p-2 text-left align-top transition', !inMonth && 'opacity-40', selectedDate === key && 'ring-2 ring-inset ring-[var(--accent)]')}><span className="text-xs font-semibold">{day.getDate()}</span><div className="mt-2 space-y-1">{dayTasks.slice(0, 2).map((task) => <span key={task.id} className="block truncate rounded bg-[var(--accent-soft)] px-1.5 py-1 text-[10px] text-[var(--accent-strong)]">{task.title}</span>)}{dayTasks.length > 2 && <span className={cn('text-[10px]', muted(theme))}>+{dayTasks.length - 2} more</span>}</div></button>; })}</div></div><aside className={cn('rounded-lg border p-4', surface(theme))}><h3 className="font-bold">{new Date(`${selectedDate}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h3><p className={cn('mt-1 text-xs', muted(theme))}>{selectedTasks.length} task{selectedTasks.length === 1 ? '' : 's'}</p><div className="mt-4 space-y-3">{selectedTasks.map((task) => <div key={task.id} className="border-l-2 border-[var(--accent)] pl-3"><p className="text-sm font-semibold">{task.title}</p><p className={cn('text-xs', muted(theme))}>{task.project_name || 'General'} · {task.assignee_id ? profiles[task.assignee_id]?.display_name ?? 'Assigned' : 'Unassigned'}</p></div>)}{selectedTasks.length === 0 && <p className={cn('py-10 text-center text-sm', muted(theme))}>No tasks for this date.</p>}</div></aside></div></div>;
 }
 
 function PriorityPill({ priority }: { priority: TaskPriority }) {
@@ -2187,7 +2210,7 @@ function KnowledgeView({
           <option value="all">All categories</option>
           {knowledgeCategories.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
-        <button onClick={onCreate} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New article</button>
+        <button onClick={onCreate} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New article</button>
       </div>
       {visibleArticles.length === 0 ? (
         <EmptyState theme={theme} icon={FileText} title="No knowledge articles found" body="Create documentation, how-to guides, FAQs, best practices, troubleshooting steps, or standard operating procedures." actionLabel="Create article" onAction={onCreate} />
@@ -2195,7 +2218,7 @@ function KnowledgeView({
         <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.5fr)]">
           <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1 scroll-area">
             {visibleArticles.map((article) => (
-              <button key={article.id} onClick={() => setSelectedArticleId(article.id)} className={cn('w-full rounded-lg border p-4 text-left transition', selectedArticle?.id === article.id ? 'border-[#E9B93E] bg-[#FFF3C4]/60' : surface(theme))}>
+              <button key={article.id} onClick={() => setSelectedArticleId(article.id)} className={cn('w-full rounded-lg border p-4 text-left transition', selectedArticle?.id === article.id ? 'border-[var(--accent)] bg-[var(--accent-soft)]/60' : surface(theme))}>
                 <span className={cn('text-xs font-semibold uppercase tracking-[0.12em]', muted(theme))}>{getKnowledgeCategoryLabel(article.category)}</span>
                 <span className="mt-2 block font-bold">{article.title}</span>
                 {article.summary && <span className={cn('mt-1 block line-clamp-2 text-sm', muted(theme))}>{article.summary}</span>}
@@ -2208,9 +2231,9 @@ function KnowledgeView({
                 <div className="min-w-0 flex-1"><p className={cn('text-xs font-semibold uppercase tracking-[0.14em]', muted(theme))}>{getKnowledgeCategoryLabel(selectedArticle.category)}</p><h2 className="mt-2 text-2xl font-bold">{selectedArticle.title}</h2></div>
                 {canManage && <div className="flex gap-2"><button aria-label="Edit article" title="Edit article" onClick={() => onEdit(selectedArticle)} className={cn('inline-flex h-9 w-9 items-center justify-center rounded-lg border', subtleButton(theme))}><Pencil className="h-4 w-4" /></button><button aria-label="Delete article" title="Delete article" onClick={() => void onDelete(selectedArticle)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] text-[#B91C1C]"><Trash2 className="h-4 w-4" /></button></div>}
               </div>
-              {selectedArticle.summary && <p className={cn('mt-4 border-l-2 border-[#E9B93E] pl-4 text-sm leading-6', muted(theme))}>{selectedArticle.summary}</p>}
+              {selectedArticle.summary && <p className={cn('mt-4 border-l-2 border-[var(--accent)] pl-4 text-sm leading-6', muted(theme))}>{selectedArticle.summary}</p>}
               <div className={cn('mt-6 whitespace-pre-wrap text-sm leading-7', muted(theme))}>{selectedArticle.content}</div>
-              <div className="mt-8 flex items-center gap-3 border-t border-inherit pt-4"><Avatar profile={profiles[selectedArticle.created_by]} /><div><p className="text-sm font-semibold">{profiles[selectedArticle.created_by]?.display_name ?? 'Camp member'}</p><p className={cn('text-xs', muted(theme))}>Updated {formatTimeAgo(selectedArticle.updated_at)}</p></div></div>
+              <div className="mt-8 flex items-center gap-3 border-t border-inherit pt-4"><Avatar profile={profiles[selectedArticle.created_by]} /><div><p className="text-sm font-semibold">{profiles[selectedArticle.created_by]?.display_name ?? 'Hub member'}</p><p className={cn('text-xs', muted(theme))}>Updated {formatTimeAgo(selectedArticle.updated_at)}</p></div></div>
             </article>
           )}
         </div>
@@ -2246,7 +2269,7 @@ function AdminView({
     <StaticPanel theme={theme} title="Admin" icon={ShieldCheck}>
       <div className="grid gap-4 xl:grid-cols-2">
         <div className={cn('rounded-lg border p-4', surface(theme))}>
-          <p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Camp</p>
+          <p className={cn('text-xs font-semibold uppercase tracking-[0.18em]', muted(theme))}>Hub</p>
           <h2 className="mt-2 text-xl font-bold">{workspace?.name}</h2>
           <p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'free'} plan</p>
         </div>
@@ -2258,7 +2281,7 @@ function AdminView({
             </button>
           </div>
           {permissionsHelpOpen && (
-            <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#211A16]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+            <div className={cn('absolute right-4 top-14 z-30 w-[min(340px,calc(100%_-_32px))] rounded-lg border p-4 shadow-2xl', theme === 'dark' ? 'border-white/10 bg-[#17151D]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
               <div className="space-y-3">
                 {workspaceRoles.map(({ role, detail }) => <div key={role}><p className="text-sm font-semibold">{getRoleLabel(role)}</p><p className={cn('text-xs leading-5', muted(theme))}>{detail}</p></div>)}
               </div>
@@ -2269,7 +2292,7 @@ function AdminView({
 
         <section className="xl:col-span-2">
           <div className="mb-3 flex items-center justify-between">
-            <div><h3 className="font-bold">People and roles</h3><p className={cn('text-sm', muted(theme))}>Manage camp access without opening individual profiles.</p></div>
+            <div><h3 className="font-bold">People and roles</h3><p className={cn('text-sm', muted(theme))}>Manage hub access without opening individual profiles.</p></div>
           </div>
           <div className="grid gap-5">
             {groups.map((group) => {
@@ -2297,7 +2320,7 @@ function AdminView({
                             }}
                             className={cn('h-10 rounded-lg border bg-transparent px-3 text-sm font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-70', subtleButton(theme))}
                           >
-                            {membership.role === 'owner' && <option value="owner">Chief</option>}
+                            {membership.role === 'owner' && <option value="owner">Owner</option>}
                             <option value="admin">Admin</option>
                             <option value="member">Member</option>
                             <option value="guest">Guest</option>
@@ -2329,12 +2352,12 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
   return (
     <div className="mt-5 border-t border-inherit pt-4">
       <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#FFF3C4] text-[#8F4F2E]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)]">
           <UserPlus className="h-5 w-5" />
         </div>
         <div>
           <h3 className="font-bold">Invite by role</h3>
-          <p className={cn('text-sm', muted(theme))}>Invite an Admin, Member, or Guest using their camp email.</p>
+          <p className={cn('text-sm', muted(theme))}>Invite an Admin, Member, or Guest using their hub email.</p>
         </div>
       </div>
       <form
@@ -2370,7 +2393,7 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
           <option value="member">Member</option>
           <option value="guest">Guest</option>
         </select>
-        <button disabled={submitting || !email.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
+        <button disabled={submitting || !email.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
           Invite
         </button>
@@ -2382,7 +2405,7 @@ function InvitePanel({ theme, onInvite }: { theme: 'light' | 'dark'; onInvite: (
           <div className="flex gap-2">
             <input readOnly value={inviteLink} className="min-w-0 flex-1 bg-transparent outline-none" />
             <button
-              className="inline-flex items-center gap-2 rounded-md bg-[#8F4F2E] px-3 py-2 text-xs font-semibold text-white"
+              className="inline-flex items-center gap-2 rounded-md bg-[var(--accent-strong)] px-3 py-2 text-xs font-semibold text-white"
               onClick={async () => {
                 await navigator.clipboard.writeText(inviteLink);
                 setCopied(true);
@@ -2404,7 +2427,7 @@ function StaticPanel({ theme, title, icon: Icon, children }: { theme: 'light' | 
   return (
     <div className="min-h-0 overflow-hidden">
       <div className="mb-5 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#332722] text-[#FFF7E8]">
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#17151D] text-[#FAF9FC]">
           <Icon className="h-5 w-5" />
         </div>
         <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
@@ -2447,7 +2470,7 @@ function PostComposer({
         }}
       >
         <label className="grid gap-2 text-sm font-semibold">
-          Trail
+          Room
           <select value={spaceId} onChange={(event) => setSpaceId(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
             {spaces.map((space) => (
               <option key={space.id} value={space.id}>
@@ -2464,7 +2487,7 @@ function PostComposer({
           Body
           <textarea value={body} onChange={(event) => setBody(event.target.value)} className={cn('h-36 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
         </label>
-        <button disabled={submitting || !title.trim() || !body.trim() || !spaceId} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+        <button disabled={submitting || !title.trim() || !body.trim() || !spaceId} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
           {initialPost ? 'Save post' : 'Publish'}
         </button>
@@ -2493,7 +2516,7 @@ function KnowledgeArticleModal({ theme, article, onClose, onSave }: { theme: 'li
         <label className="grid gap-2 text-sm font-semibold">Title<input value={title} onChange={(event) => setTitle(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
         <label className="grid gap-2 text-sm font-semibold">Summary<input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="A short description for search results" className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} /></label>
         <label className="grid gap-2 text-sm font-semibold">Article content<textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Write clear steps, answers, or procedures..." className={cn('h-64 resize-y rounded-lg border bg-transparent p-3 leading-6 outline-none', subtleButton(theme))} /></label>
-        <button disabled={submitting || !title.trim() || !content.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:opacity-50">{submitting && <Loader2 className="h-4 w-4 animate-spin" />}{article ? 'Save article' : 'Publish article'}</button>
+        <button disabled={submitting || !title.trim() || !content.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:opacity-50">{submitting && <Loader2 className="h-4 w-4 animate-spin" />}{article ? 'Save article' : 'Publish article'}</button>
         {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
       </form>
     </ModalShell>
@@ -2515,7 +2538,7 @@ function SpaceModal({
   const [error, setError] = useState('');
 
   return (
-    <ModalShell theme={theme} title="Create trail" onClose={onClose}>
+    <ModalShell theme={theme} title="Create room" onClose={onClose}>
       <form
         className="grid gap-4"
         onSubmit={async (event) => {
@@ -2533,20 +2556,20 @@ function SpaceModal({
         }}
       >
         <label className="grid gap-2 text-sm font-semibold">
-          Trail name
+          Room name
           <input value={name} onChange={(event) => setName(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
         </label>
         <label className="grid gap-2 text-sm font-semibold">
           Access
           <select value={access} onChange={(event) => setAccess(event.target.value as SpaceAccess)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
-            <option value="public">Public trail</option>
-            <option value="private">Private trail</option>
-            <option value="invite_only">Invite-only trail</option>
+            <option value="public">Public room</option>
+            <option value="private">Private room</option>
+            <option value="invite_only">Invite-only room</option>
           </select>
         </label>
-        <button disabled={submitting || !name.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+        <button disabled={submitting || !name.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          Create trail
+          Create room
         </button>
         {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
       </form>
@@ -2625,7 +2648,7 @@ function TaskModal({
             <input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))} />
           </label>
         </div>
-        <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+        <button disabled={submitting || !title.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
           {task ? 'Save task' : 'Create task'}
         </button>
@@ -2639,6 +2662,8 @@ function SettingsModal({
   section,
   theme,
   setTheme,
+  accentColor,
+  setAccentColor,
   chatOpen,
   setChatOpen,
   profile,
@@ -2654,6 +2679,8 @@ function SettingsModal({
   section: AccountModalView;
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
+  accentColor: AccentColor;
+  setAccentColor: (accent: AccentColor) => void;
   chatOpen: boolean;
   setChatOpen: (open: boolean) => void;
   profile?: AppProfile;
@@ -2686,7 +2713,7 @@ function SettingsModal({
     profile: 'Profile',
     settings: 'Settings',
     help: 'Help center',
-    about: 'About Tribu',
+    about: 'About TriCord',
     report: 'Report a problem',
   };
 
@@ -2697,8 +2724,8 @@ function SettingsModal({
           <div className="mb-4 flex items-center gap-3">
             <Avatar profile={{ id: profile?.id ?? '', email, display_name: nickname || 'Member', full_name: fullName, nickname, avatar_url: avatarUrl || null, timezone }} />
             <div className="min-w-0">
-              <p className="truncate font-bold">{nickname || 'Camp member'}</p>
-              <p className={cn('truncate text-sm', muted(theme))}>{workspace?.name ?? 'Camp'} · {role ? getRoleLabel(role) : 'Member'}</p>
+              <p className="truncate font-bold">{nickname || 'Hub member'}</p>
+              <p className={cn('truncate text-sm', muted(theme))}>{workspace?.name ?? 'Hub'} · {role ? getRoleLabel(role) : 'Member'}</p>
             </div>
           </div>
           <form
@@ -2737,7 +2764,7 @@ function SettingsModal({
               <span className={cn('text-xs font-normal', muted(theme))}>Shown in chat, posts, and your profile.</span>
             </label>
             <label className="grid gap-2 text-sm font-semibold">
-              <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> Tribu email</span>
+              <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> TriCord email</span>
               <input readOnly value={email} className={cn('h-11 cursor-not-allowed rounded-lg border bg-transparent px-3 opacity-75 outline-none', subtleButton(theme))} />
             </label>
             <label className="grid gap-2 text-sm font-semibold">
@@ -2792,7 +2819,7 @@ function SettingsModal({
               About
               <textarea value={bio} onChange={(event) => setBio(event.target.value)} className={cn('h-24 resize-none rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
             </label>
-            <button disabled={submitting || !fullName.trim() || !nickname.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 md:col-span-2">
+            <button disabled={submitting || !fullName.trim() || !nickname.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 md:col-span-2">
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               Save profile
             </button>
@@ -2804,20 +2831,43 @@ function SettingsModal({
         {section === 'personalization' && <section className={cn('rounded-lg border p-4', surface(theme))}>
           <p className="font-bold">Appearance</p>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setTheme('light')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'light' ? 'border-[#E9B93E] bg-[#E9B93E] text-[#211A16]' : subtleButton(theme))}>
+            <button type="button" onClick={() => setTheme('light')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'light' ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]' : subtleButton(theme))}>
               <Sun className="h-4 w-4" />
               Light
             </button>
-            <button type="button" onClick={() => setTheme('dark')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'dark' ? 'border-[#E9B93E] bg-[#E9B93E] text-[#211A16]' : subtleButton(theme))}>
+            <button type="button" onClick={() => setTheme('dark')} className={cn('inline-flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold', theme === 'dark' ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-ink)]' : subtleButton(theme))}>
               <Moon className="h-4 w-4" />
               Dark
             </button>
           </div>
           <div className="mt-5 border-t border-inherit pt-4">
+            <p className="font-bold">Accent color</p>
+            <p className={cn('mt-1 text-xs', muted(theme))}>Choose the color used for selected items, controls, and highlights.</p>
+            <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Accent color">
+              {(Object.entries(accentPalettes) as [AccentColor, (typeof accentPalettes)[AccentColor]][]).map(([value, palette]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={accentColor === value}
+                  aria-label={palette.label}
+                  title={palette.label}
+                  onClick={() => setAccentColor(value)}
+                  className={cn(
+                    'flex h-10 w-10 items-center justify-center rounded-lg border transition',
+                    accentColor === value ? 'border-current ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-transparent' : 'border-transparent',
+                  )}
+                >
+                  <span className="h-6 w-6 rounded-md" style={{ backgroundColor: palette.accent }} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-5 border-t border-inherit pt-4">
             <p className="font-bold">Workspace layout</p>
             <label className="mt-3 flex items-center justify-between gap-4 text-sm">
               <span><span className="block font-semibold">Discussion side panel</span><span className={cn('mt-1 block text-xs', muted(theme))}>Show chat on Tasks, Knowledge, and Admin. Toggle it anytime with Ctrl/⌘ + \.</span></span>
-              <input type="checkbox" checked={chatOpen} onChange={(event) => setChatOpen(event.target.checked)} className="h-4 w-4 accent-[#8F4F2E]" />
+              <input type="checkbox" checked={chatOpen} onChange={(event) => setChatOpen(event.target.checked)} className="h-4 w-4 accent-[var(--accent-strong)]" />
             </label>
           </div>
         </section>}
@@ -2826,16 +2876,16 @@ function SettingsModal({
           <div className="grid gap-3">
             <section className={cn('rounded-lg border p-4', surface(theme))}>
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Account</p>
-              <div className="mt-3 flex items-center gap-3"><Avatar profile={profile} /><div className="min-w-0"><p className="truncate font-bold">{getProfileName(profile, email.split('@')[0] || 'Camp member')}</p><p className={cn('truncate text-sm', muted(theme))}>{email}</p></div></div>
+              <div className="mt-3 flex items-center gap-3"><Avatar profile={profile} /><div className="min-w-0"><p className="truncate font-bold">{getProfileName(profile, email.split('@')[0] || 'Hub member')}</p><p className={cn('truncate text-sm', muted(theme))}>{email}</p></div></div>
             </section>
             <section className={cn('rounded-lg border p-4', surface(theme))}>
               <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Plan</p>
               <p className="mt-2 text-lg font-bold capitalize">{workspace?.plan ?? 'Free'}</p>
-              <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Your current Tribu account includes the core Camp, Trail, feed, task, and knowledge features.</p>
+              <p className={cn('mt-1 text-sm leading-6', muted(theme))}>Your current TriCord account includes the core Hub, Room, feed, task, and knowledge features.</p>
             </section>
             <section className={cn('rounded-lg border p-4', surface(theme))}>
-              <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Camp access</p>
-              <p className="mt-2 font-bold">{workspace?.name ?? 'Camp'}</p>
+              <p className={cn('text-xs font-semibold uppercase tracking-[0.16em]', muted(theme))}>Hub access</p>
+              <p className="mt-2 font-bold">{workspace?.name ?? 'Hub'}</p>
               <p className={cn('mt-1 text-sm', muted(theme))}>{role ? getRoleLabel(role) : 'Member'} role</p>
             </section>
           </div>
@@ -2843,19 +2893,19 @@ function SettingsModal({
 
         {section === 'help' && (
           <div className="grid gap-3">
-            <HelpTopic title="Start with the Active Feed" body="Create a post in a Trail, assign it to a camp member, attach files, and continue the conversation in the discussion panel." theme={theme} />
+            <HelpTopic title="Start with the Active Feed" body="Create a post in a Room, assign it to a hub member, attach files, and continue the conversation in the discussion panel." theme={theme} />
             <HelpTopic title="Plan work in Tasks" body="Use Board, List, or Calendar. Drag cards between stages, set priorities and due dates, and archive completed work." theme={theme} />
-            <HelpTopic title="Build shared knowledge" body="Publish how-to guides, FAQs, troubleshooting notes, and standard procedures so your camp can find answers quickly." theme={theme} />
-            <HelpTopic title="Manage access" body="Chiefs and Admins can invite people and manage roles from Admin. Members and Guests only see the areas permitted for their role." theme={theme} />
+            <HelpTopic title="Build shared knowledge" body="Publish how-to guides, FAQs, troubleshooting notes, and standard procedures so your hub can find answers quickly." theme={theme} />
+            <HelpTopic title="Manage access" body="Owners and Admins can invite people and manage roles from Admin. Members and Guests only see the areas permitted for their role." theme={theme} />
             <HelpTopic title="Keyboard shortcut" body="Press Ctrl + \\ on Windows or Linux, or ⌘ + \\ on macOS, to hide or show the discussion panel." theme={theme} />
-            <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white"><Bug className="h-4 w-4" />Report a problem</button>
+            <button type="button" onClick={() => onOpenSection('report')} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white"><Bug className="h-4 w-4" />Report a problem</button>
           </div>
         )}
 
         {section === 'about' && (
           <section className={cn('rounded-lg border p-5', surface(theme))}>
-            <div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#E9B93E]"><TribuLogo className="h-10 w-10" /></div><div><p className="text-lg font-bold">Tribu</p><p className={cn('text-sm', muted(theme))}>Collaborative camps for teams</p></div></div>
-            <p className={cn('mt-5 text-sm leading-7', muted(theme))}>Tribu brings conversations, project work, shared knowledge, and camp administration into one focused workspace.</p>
+            <div className="flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]"><TriCordLogo className="h-10 w-10" /></div><div><p className="text-lg font-bold">TriCord</p><p className={cn('text-sm', muted(theme))}>Collaborative hubs for teams</p></div></div>
+            <p className={cn('mt-5 text-sm leading-7', muted(theme))}>TriCord brings conversations, project work, shared knowledge, and hub administration into one focused workspace.</p>
             <div className="mt-5 border-t border-inherit pt-4"><p className="text-sm font-semibold">Account plan</p><p className={cn('mt-1 text-sm capitalize', muted(theme))}>{workspace?.plan ?? 'Free'}</p></div>
           </section>
         )}
@@ -2867,16 +2917,16 @@ function SettingsModal({
               event.preventDefault();
               setReportError('');
               if (!ownerEmail) {
-                setReportError('The Camp owner email is not available. Ask a Chief or Admin for support.');
+                setReportError('The Hub owner email is not available. Ask a Owner or Admin for support.');
                 return;
               }
               if (!concernDetails.trim()) return;
-              const subject = `[Tribu] ${concernType}`;
-              const body = [`Camp: ${workspace?.name ?? 'Tribu'}`, `From: ${email}`, `Concern: ${concernType}`, '', concernDetails.trim()].join('\n');
+              const subject = `[TriCord] ${concernType}`;
+              const body = [`Hub: ${workspace?.name ?? 'TriCord'}`, `From: ${email}`, `Concern: ${concernType}`, '', concernDetails.trim()].join('\n');
               window.location.href = `mailto:${encodeURIComponent(ownerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
             }}
           >
-            <p className={cn('text-sm leading-6', muted(theme))}>Describe what happened and Tribu will prepare an email addressed to your Camp owner.</p>
+            <p className={cn('text-sm leading-6', muted(theme))}>Describe what happened and TriCord will prepare an email addressed to your Hub owner.</p>
             <label className="grid gap-2 text-sm font-semibold">
               Type of concern
               <select value={concernType} onChange={(event) => setConcernType(event.target.value)} className={cn('h-11 rounded-lg border bg-transparent px-3 outline-none', subtleButton(theme))}>
@@ -2892,7 +2942,7 @@ function SettingsModal({
               Details
               <textarea value={concernDetails} onChange={(event) => setConcernDetails(event.target.value)} placeholder="Include what you expected, what happened, and any steps that may help reproduce it." className={cn('min-h-40 resize-y rounded-lg border bg-transparent p-3 outline-none', subtleButton(theme))} />
             </label>
-            <button disabled={!concernDetails.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Mail className="h-4 w-4" />Submit</button>
+            <button disabled={!concernDetails.trim()} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Mail className="h-4 w-4" />Submit</button>
             <p className={cn('text-xs leading-5', muted(theme))}>Your default email app will open so you can review and send the message.</p>
             {reportError && <p className="text-sm font-semibold text-[#B91C1C]">{reportError}</p>}
           </form>
@@ -2905,7 +2955,7 @@ function SettingsModal({
 function ModalShell({ theme, title, children, onClose, wide = false }: { theme: 'light' | 'dark'; title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 p-4">
-      <div className={cn('max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl border p-5 shadow-2xl scroll-area', wide ? 'max-w-4xl' : 'max-w-lg', theme === 'dark' ? 'border-white/10 bg-[#201815]' : 'border-[#DFC9A4] bg-[#FFFAF0]')}>
+      <div className={cn('max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-xl border p-5 shadow-2xl scroll-area', wide ? 'max-w-4xl' : 'max-w-lg', theme === 'dark' ? 'border-white/10 bg-[#0C0B10]' : 'border-[#E7E3EA] bg-[#FFFFFF]')}>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-bold">{title}</h2>
           <button aria-label="Close modal" onClick={onClose} className={cn('rounded-lg border p-2', subtleButton(theme))}>
@@ -2927,14 +2977,14 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#E9B93E] text-[#211A16] shadow-lg shadow-[#8F4F2E]/20">
-          <TribuLogo className="h-12 w-12" />
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)] text-[var(--accent-ink)] shadow-lg shadow-[var(--accent-strong)]/20">
+          <TriCordLogo className="h-12 w-12" />
         </div>
-        <h1 className="mt-6 text-3xl font-bold tracking-tight">{inviteToken ? 'Accept your invite' : 'Sign in to Tribu'}</h1>
+        <h1 className="mt-6 text-3xl font-bold tracking-tight">{inviteToken ? 'Accept your invite' : 'Sign in to TriCord'}</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
           {inviteToken
             ? 'Use the exact email address that received this invite.'
-            : 'Enter the email connected to your Camp. Chiefs, Admins, Members, and Guests all use the same sign-in.'}
+            : 'Enter the email connected to your Hub. Owners, Admins, Members, and Guests all use the same sign-in.'}
         </p>
         <form
           className="mt-6 grid gap-3 text-left"
@@ -2957,7 +3007,7 @@ function AuthScreen({ theme, setTheme, inviteToken }: { theme: 'light' | 'dark';
           }}
         >
           <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="you@company.com" className={cn('h-12 rounded-lg border bg-transparent px-4 outline-none', subtleButton(theme))} />
-          <button disabled={submitting || !email.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          <button disabled={submitting || !email.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             Send magic link
           </button>
@@ -2985,29 +3035,29 @@ function OnboardingScreen({
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [creatingCamp, setCreatingCamp] = useState(false);
+  const [creatingHub, setCreatingHub] = useState(false);
 
   return (
     <CenteredScreen theme={theme} setTheme={setTheme}>
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#E9B93E] text-[#211A16] shadow-lg shadow-[#8F4F2E]/20">
-          <TribuLogo className="h-12 w-12" />
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent)] text-[var(--accent-ink)] shadow-lg shadow-[var(--accent-strong)]/20">
+          <TriCordLogo className="h-12 w-12" />
         </div>
-        <h1 className="mt-6 text-3xl font-bold tracking-tight">No Camp found</h1>
+        <h1 className="mt-6 text-3xl font-bold tracking-tight">No Hub found</h1>
         <p className={cn('mt-3 text-sm leading-6', muted(theme))}>
-          You are signed in as {email}, but this email is not a member of any Camp yet. If you expected access, use the invited email or ask your Chief/Admin for an invite.
+          You are signed in as {email}, but this email is not a member of any Hub yet. If you expected access, use the invited email or ask your Owner/Admin for an invite.
         </p>
-        {!creatingCamp && (
+        {!creatingHub && (
           <div className="mt-6 grid gap-3 text-left">
-            <button type="button" onClick={onSignOut} className="inline-flex h-12 items-center justify-center rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white">
+            <button type="button" onClick={onSignOut} className="inline-flex h-12 items-center justify-center rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white">
               Sign in with a different email
             </button>
-            <button type="button" onClick={() => setCreatingCamp(true)} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
-              Create a new Camp instead
+            <button type="button" onClick={() => setCreatingHub(true)} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
+              Create a new Hub instead
             </button>
           </div>
         )}
-        {creatingCamp && (
+        {creatingHub && (
           <form
             className="mt-6 grid gap-3 text-left"
             onSubmit={async (event) => {
@@ -3025,14 +3075,14 @@ function OnboardingScreen({
             }}
           >
             <div className={cn('rounded-lg border px-4 py-3 text-sm leading-6', surface(theme))}>
-              This creates a separate Camp and makes {email} the Chief. Do this only if you are starting a new Camp.
+              This creates a separate Hub and makes {email} the Owner. Do this only if you are starting a new Hub.
             </div>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New Camp name" className={cn('h-12 rounded-lg border bg-transparent px-4 outline-none', subtleButton(theme))} />
-            <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="New Hub name" className={cn('h-12 rounded-lg border bg-transparent px-4 outline-none', subtleButton(theme))} />
+            <button disabled={submitting || !name.trim()} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              Create new Camp as Chief
+              Create new Hub as Owner
             </button>
-            <button type="button" onClick={() => setCreatingCamp(false)} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
+            <button type="button" onClick={() => setCreatingHub(false)} className={cn('inline-flex h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold', subtleButton(theme))}>
               Back to sign-in options
             </button>
             {error && <p className="text-sm font-semibold text-[#B91C1C]">{error}</p>}
@@ -3058,9 +3108,9 @@ function SetupScreen({ theme, setTheme }: { theme: 'light' | 'dark'; setTheme: (
 
 function LoadingScreen({ theme }: { theme: 'light' | 'dark' }) {
   return (
-    <div className={cn('relative flex h-dvh items-center justify-center overflow-hidden', theme === 'dark' ? 'bg-[#201815] text-[#FFF7E8]' : 'bg-[#F6EAD4] text-[#211A16]')}>
+    <div className={cn('relative flex h-dvh items-center justify-center overflow-hidden', theme === 'dark' ? 'bg-[#0C0B10] text-[#FAF9FC]' : 'bg-[#F5F4F7] text-[#17151D]')}>
       <AmbientMotifs theme={theme} />
-      <Loader2 className="relative z-10 h-6 w-6 animate-spin text-[#8F4F2E]" />
+      <Loader2 className="relative z-10 h-6 w-6 animate-spin text-[var(--accent-strong)]" />
     </div>
   );
 }
@@ -3081,10 +3131,10 @@ function InviteAcceptScreen({
   const emailMismatch = error.toLowerCase().includes('different email');
 
   return (
-    <div className={cn('relative grid h-dvh overflow-hidden p-4', theme === 'dark' ? 'bg-[#201815] text-[#FFF7E8]' : 'bg-[#F6EAD4] text-[#211A16]')}>
+    <div className={cn('relative grid h-dvh overflow-hidden p-4', theme === 'dark' ? 'bg-[#0C0B10] text-[#FAF9FC]' : 'bg-[#F5F4F7] text-[#17151D]')}>
       <AmbientMotifs theme={theme} />
       <div className="mx-auto max-w-md place-self-center text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#8F4F2E] text-white shadow-lg shadow-[#8F4F2E]/20">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent-strong)] text-white shadow-lg shadow-[var(--accent-strong)]/20">
           {error ? <X className="h-6 w-6" /> : <Loader2 className="h-6 w-6 animate-spin" />}
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight">{error ? 'Invite could not be accepted' : 'Accepting invite'}</h1>
@@ -3092,14 +3142,14 @@ function InviteAcceptScreen({
           {error
             ? emailMismatch
               ? `You are currently signed in as ${email}. This invite belongs to another email address.`
-              : 'This invite could not be completed. Ask the camp Chief or admin to send a fresh invite link.'
-            : `Signed in as ${email}. Adding you to the invited camp...`}
+              : 'This invite could not be completed. Ask the hub Owner or admin to send a fresh invite link.'
+            : `Signed in as ${email}. Adding you to the invited hub...`}
         </p>
         {error && <p className="mt-4 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-4 py-3 text-left text-sm font-semibold text-[#B91C1C]">{error}</p>}
         {error && (
           <div className="mt-4 grid gap-2">
             {emailMismatch && (
-              <button onClick={() => void onUseInvitedEmail()} className="inline-flex h-11 items-center justify-center rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white">
+              <button onClick={() => void onUseInvitedEmail()} className="inline-flex h-11 items-center justify-center rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white">
                 Sign in with invited email
               </button>
             )}
@@ -3115,7 +3165,7 @@ function InviteAcceptScreen({
 
 function CenteredScreen({ theme, setTheme, children }: { theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; children: ReactNode }) {
   return (
-    <div className={cn('relative grid h-dvh overflow-hidden p-4', theme === 'dark' ? 'bg-[#201815] text-[#FFF7E8]' : 'bg-[#F6EAD4] text-[#211A16]')}>
+    <div className={cn('relative grid h-dvh overflow-hidden p-4', theme === 'dark' ? 'bg-[#0C0B10] text-[#FAF9FC]' : 'bg-[#F5F4F7] text-[#17151D]')}>
       <AmbientMotifs theme={theme} />
       <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className={cn('absolute right-5 top-5 z-10 rounded-lg border p-2', subtleButton(theme))}>
         {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -3128,13 +3178,13 @@ function CenteredScreen({ theme, setTheme, children }: { theme: 'light' | 'dark'
 function EmptyState({ theme, icon: Icon, title, body, actionLabel, onAction }: { theme: 'light' | 'dark'; icon: LucideIcon; title: string; body: string; actionLabel?: string; onAction?: () => void }) {
   return (
     <div className={cn('flex min-h-[320px] flex-col items-center justify-center rounded-lg border p-8 text-center', surface(theme))}>
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#FFF3C4] text-[#8F4F2E]">
+      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
         <Icon className="h-6 w-6" />
       </div>
       <h3 className="mt-5 text-xl font-bold">{title}</h3>
       <p className={cn('mt-2 max-w-md text-sm leading-6', muted(theme))}>{body}</p>
       {actionLabel && onAction && (
-        <button onClick={onAction} className="mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-[#8F4F2E] px-4 text-sm font-semibold text-white">
+        <button onClick={onAction} className="mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-[var(--accent-strong)] px-4 text-sm font-semibold text-white">
           {actionLabel}
         </button>
       )}
@@ -3146,7 +3196,7 @@ function NavButton({ icon: Icon, label, active, onClick, theme }: { icon: Lucide
   return (
     <button
       onClick={onClick}
-      className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition', active ? 'bg-[#E9B93E] text-[#211A16] shadow-lg shadow-[#8F4F2E]/20' : 'text-[#DED1BF] hover:bg-[#FFF7E8]/10 hover:text-[#FFF7E8]')}
+      className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition', active ? 'bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-sm' : theme === 'dark' ? 'text-[#D8D4DE] hover:bg-white/10 hover:text-white' : 'text-[#5E5767] hover:bg-[#F0EDF3] hover:text-[#17151D]')}
     >
       <Icon className="h-4 w-4" />
       {label}
@@ -3154,12 +3204,12 @@ function NavButton({ icon: Icon, label, active, onClick, theme }: { icon: Lucide
   );
 }
 
-function AccountMenuButton({ icon: Icon, label, trailing: TrailingIcon, active = false, onClick }: { icon: LucideIcon; label: string; trailing?: LucideIcon; active?: boolean; onClick: () => void }) {
+function AccountMenuButton({ icon: Icon, label, rooming: RoomingIcon, active = false, onClick }: { icon: LucideIcon; label: string; rooming?: LucideIcon; active?: boolean; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} className={cn('flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition hover:bg-white/10', active && 'bg-white/10')}>
       <Icon className="h-4 w-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {TrailingIcon && <TrailingIcon className={cn('h-4 w-4 shrink-0 transition-transform', active && 'rotate-90')} />}
+      {RoomingIcon && <RoomingIcon className={cn('h-4 w-4 shrink-0 transition-transform', active && 'rotate-90')} />}
     </button>
   );
 }
@@ -3189,11 +3239,11 @@ function StatusPill({ state }: { state: AppPost['state'] }) {
   return <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', styles[state])}>{labels[state]}</span>;
 }
 
-function getProfileName(profile?: AppProfile, fallback = 'Camp member') {
+function getProfileName(profile?: AppProfile, fallback = 'Hub member') {
   return profile?.nickname?.trim() || profile?.display_name?.trim() || fallback;
 }
 
-function getProfileFullName(profile?: AppProfile, fallback = 'Camp member') {
+function getProfileFullName(profile?: AppProfile, fallback = 'Hub member') {
   return profile?.full_name?.trim() || profile?.display_name?.trim() || fallback;
 }
 
@@ -3202,7 +3252,7 @@ function Avatar({ profile }: { profile?: AppProfile }) {
   if (profile?.avatar_url) {
     return <img src={profile.avatar_url} alt={profileName} className="h-9 w-9 rounded-lg object-cover" />;
   }
-  return <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF3C4] text-sm font-bold text-[#8F4F2E]">{profileName.slice(0, 1).toUpperCase()}</div>;
+  return <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent-strong)]">{profileName.slice(0, 1).toUpperCase()}</div>;
 }
 
 async function fetchProfiles(userIds: string[]) {
@@ -3364,7 +3414,7 @@ async function deletePost(postId: string) {
     .eq('post_id', postId);
   const { data, error } = await supabase.from('posts').delete().eq('id', postId).select('id').maybeSingle();
   if (error) throw error;
-  if (!data) throw new Error('The post was not deleted. Apply the latest Supabase migration and confirm your account is the author, Chief, or admin.');
+  if (!data) throw new Error('The post was not deleted. Apply the latest Supabase migration and confirm your account is the author, Owner, or admin.');
   const pathsByBucket = new Map<string, string[]>();
   (attachmentRows ?? []).forEach((attachment) => {
     pathsByBucket.set(attachment.bucket, [...(pathsByBucket.get(attachment.bucket) ?? []), attachment.object_path]);
@@ -3594,7 +3644,7 @@ async function deleteTask(taskId: string) {
   if (!supabase) return;
   const { data, error } = await supabase.from('tasks').delete().eq('id', taskId).select('id').maybeSingle();
   if (error) throw error;
-  if (!data) throw new Error('The task was not deleted. Apply the latest Supabase migration and confirm your account is the creator, assignee, Chief, or admin.');
+  if (!data) throw new Error('The task was not deleted. Apply the latest Supabase migration and confirm your account is the creator, assignee, Owner, or admin.');
 }
 
 async function archiveTask(taskId: string) {
@@ -3773,6 +3823,12 @@ function getInitialTheme(): 'light' | 'dark' {
   return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
 }
 
+function getInitialAccentColor(): AccentColor {
+  if (typeof window === 'undefined') return 'tangerine';
+  const saved = window.localStorage.getItem(ACCENT_STORAGE_KEY);
+  return saved && saved in accentPalettes ? saved as AccentColor : 'tangerine';
+}
+
 function getInitialChatOpen() {
   if (typeof window === 'undefined') return true;
   return window.localStorage.getItem(CHAT_OPEN_STORAGE_KEY) !== 'false';
@@ -3813,7 +3869,7 @@ function isMissingProfileDetailsError(message: string) {
 
 function getRoleLabel(role: WorkspaceRole) {
   const labels: Record<WorkspaceRole, string> = {
-    owner: 'Chief',
+    owner: 'Owner',
     admin: 'Admin',
     member: 'Member',
     guest: 'Guest',
@@ -3821,7 +3877,7 @@ function getRoleLabel(role: WorkspaceRole) {
   return labels[role];
 }
 
-function getTrailAccessLabel(access: SpaceAccess) {
+function getRoomAccessLabel(access: SpaceAccess) {
   const labels: Record<SpaceAccess, string> = {
     public: 'public',
     private: 'private',
@@ -3845,13 +3901,13 @@ function clearStoredInviteToken() {
 }
 
 function surface(theme: 'light' | 'dark') {
-  return theme === 'dark' ? 'border-white/10 bg-white/[0.06]' : 'border-[#DFC9A4] bg-[#FFFAF0]/88';
+  return theme === 'dark' ? 'border-white/10 bg-white/[0.055]' : 'border-[#E7E3EA] bg-white';
 }
 
 function subtleButton(theme: 'light' | 'dark') {
-  return theme === 'dark' ? 'border-white/10 bg-white/[0.06] hover:bg-white/[0.1]' : 'border-[#DFC9A4] bg-[#FFFAF0]/78 hover:bg-[#FFF3C4]';
+  return theme === 'dark' ? 'border-white/10 bg-white/[0.055] hover:bg-white/[0.1]' : 'border-[#E7E3EA] bg-white hover:bg-[var(--accent-soft)]';
 }
 
 function muted(theme: 'light' | 'dark') {
-  return theme === 'dark' ? 'text-[#DFC9A4]' : 'text-[#74685B]';
+  return theme === 'dark' ? 'text-[#AAA4B3]' : 'text-[#6F6878]';
 }

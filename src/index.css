@@ -10,7 +10,12 @@
   }
 
   html {
-    background: #faf7fb;
+    --accent: #f97316;
+    --accent-strong: #c2410c;
+    --accent-soft: #ffedd5;
+    --accent-muted: #fdba74;
+    --accent-ink: #431407;
+    background: #f5f4f7;
     overflow: hidden;
   }
 
@@ -43,7 +48,7 @@
   input:focus-visible,
   textarea:focus-visible,
   select:focus-visible {
-    outline: 3px solid color-mix(in srgb, #f0b58a 68%, white);
+    outline: 3px solid color-mix(in srgb, var(--accent) 58%, white);
     outline-offset: 2px;
   }
 }
@@ -58,7 +63,7 @@
 
   .scroll-area {
     scrollbar-width: thin;
-    scrollbar-color: #fdba74 transparent;
+    scrollbar-color: var(--accent-muted) transparent;
   }
 
   .scroll-area::-webkit-scrollbar {
@@ -70,7 +75,7 @@
   }
 
   .scroll-area::-webkit-scrollbar-thumb {
-    background: #fdba74;
+    background: var(--accent-muted);
     border-radius: 999px;
   }
 }

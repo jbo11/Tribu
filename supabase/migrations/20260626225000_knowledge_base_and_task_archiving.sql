@@ -55,7 +55,7 @@ begin
   select * into target_task from public.tasks where id = target_task_id;
   if target_task.id is null then raise exception 'Task not found.'; end if;
   if auth.uid() is null or not public.is_workspace_member(target_task.workspace_id) then
-    raise exception 'Camp access required.';
+    raise exception 'Hub access required.';
   end if;
   if target_task.status not in ('done', 'canceled') then
     raise exception 'Only completed or canceled tasks can be archived.';
@@ -82,7 +82,7 @@ begin
     raise exception 'Admin access required.';
   end if;
   if target_membership.role = 'owner' or new_role = 'owner' then
-    raise exception 'The Chief role cannot be changed here.';
+    raise exception 'The Owner role cannot be changed here.';
   end if;
   update public.memberships set role = new_role where id = target_membership_id;
 end;
