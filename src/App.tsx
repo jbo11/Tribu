@@ -3721,7 +3721,9 @@ async function createWorkspaceInvitation(workspaceId: string, email: string, rol
 
   if (error) throw error;
 
-  const url = new URL(window.location.origin);
+  const url = new URL(window.location.href);
+  url.hash = '';
+  url.search = '';
   url.searchParams.set('invite', String(data));
   const { error: emailError } = await supabase.auth.signInWithOtp({
     email,
